@@ -2,6 +2,12 @@
 
 A [Paseo](https://paseo.sh) plugin that connects [Lific](https://github.com/VoidNullable/lific) to your agents: start work from an issue, give agents the issue as context, follow the issue from the workspace, and run Lific plans step by step. See [OVERVIEW.md](OVERVIEW.md) for what it does and how it stores data.
 
+![The Lific home: a plan run waiting for review, issues that need you, and workable issues ready to start](assets/home.jpg)
+
+| Start work from an issue | Run a plan |
+| --- | --- |
+| ![Start work: pick a project and an issue, then the base branch, new branch, and agent](assets/start-work.jpg) | ![Run a plan: pick a plan, see its steps, and choose how the run pauses and branches](assets/run-plan.jpg) |
+
 ## Requirements
 
 - Paseo 0.12 or newer
