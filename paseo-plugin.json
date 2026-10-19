@@ -1,0 +1,8 @@
+{
+  "id": "lific",
+  "name": "Lific",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.12.0"
+  }
+}
