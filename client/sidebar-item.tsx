@@ -6,11 +6,14 @@ import { getAttention } from "../shared/rpc";
 
 const REFRESH_MS = 60_000;
 
+/** Screens that change or reload Lific state invalidate this so the badge follows them. */
+export const ATTENTION_QUERY_KEY = ["attention"];
+
 /** The Lific sidebar row, with a badge counting what waits on you. */
 export function LificSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const fetchAttention = useRpc(getAttention);
   const attention = useQuery({
-    queryKey: ["attention"],
+    queryKey: ATTENTION_QUERY_KEY,
     queryFn: () => fetchAttention({}),
     refetchInterval: REFRESH_MS,
   });

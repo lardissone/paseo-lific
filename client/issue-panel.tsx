@@ -15,6 +15,7 @@ import {
 } from "../shared/rpc";
 import { describeRunPause } from "../shared/run";
 import { Button, Chip, Message, Section, TextField } from "./kit";
+import { ATTENTION_QUERY_KEY } from "./sidebar-item";
 import { MarkdownText } from "./markdown";
 
 const REFRESH_MS = 30_000;
@@ -67,7 +68,10 @@ function PanelBody({ theme, directory, data }: { theme: Theme; directory: string
 
 function useInvalidateIssue(directory: string) {
   const queryClient = useQueryClient();
-  return () => queryClient.invalidateQueries({ queryKey: ["workspace-issue", directory] });
+  return async () => {
+    await queryClient.invalidateQueries({ queryKey: ["workspace-issue", directory] });
+    await queryClient.invalidateQueries({ queryKey: ATTENTION_QUERY_KEY });
+  };
 }
 
 function LinkForm({ theme, directory }: { theme: Theme; directory: string }) {

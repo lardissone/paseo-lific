@@ -5,7 +5,7 @@ import {
   useRpc,
 } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import type { IssueCard, IssueStatus } from "../shared/lific";
@@ -15,6 +15,7 @@ import { describeRunPause, type RunControlAction } from "../shared/run";
 import { Button, Card, CONTROL_HEIGHT, Chip, Message, type OpenScreen, priorityColor, statusColor } from "./kit";
 import { MarkdownText } from "./markdown";
 import { useLificSettings } from "./paseo-data";
+import { ATTENTION_QUERY_KEY } from "./sidebar-item";
 
 const REFRESH_MS = 60_000;
 
@@ -28,6 +29,11 @@ export function createHomeScreen(openScreen: OpenScreen) {
   return function HomeScreen({ theme, layout, navigation }: PluginScreenProps) {
     const fetchHome = useRpc(getHome);
     const home = useQuery({ queryKey: ["home"], queryFn: () => fetchHome({}), refetchInterval: REFRESH_MS });
+    // The home and the sidebar badge read the same state; keep the badge in step with each reload.
+    const queryClient = useQueryClient();
+    useEffect(() => {
+      if (home.dataUpdatedAt) void queryClient.invalidateQueries({ queryKey: ATTENTION_QUERY_KEY });
+    }, [home.dataUpdatedAt, queryClient]);
     const startWork = (params: Record<string, string>) => openScreen({ screenId: "start", params });
     const wide = !layout.compact;
 
