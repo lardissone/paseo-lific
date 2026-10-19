@@ -12,7 +12,8 @@
     "shared/",
     "README.md",
     "!**/*.test.ts",
-    "!server/fake-lific.ts"
+    "!server/fake-lific.ts",
+    "LICENSE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -29,5 +30,10 @@
     "vitest": "^5.0.5",
     "zod": "^4.4.3"
   },
-  "description": "Start Paseo agent work from Lific issues, follow them from the workspace, and run Lific plans step by step."
+  "description": "Start Paseo agent work from Lific issues, follow them from the workspace, and run Lific plans step by step.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lardissone/paseo-lific.git"
+  }
 }
