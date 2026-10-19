@@ -1,11 +1,11 @@
-import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createHomeScreen } from "./client/home-screen";
 import { IssuePanel } from "./client/issue-panel";
 import { MentionsRow } from "./client/mentions-row";
 import { NoteCard } from "./client/note-card";
 import { createRunPlanScreen } from "./client/run-plan-screen";
 import { LificSettingsScreen } from "./client/settings-screen";
+import { LificSidebarItem } from "./client/sidebar-item";
 import { StartWorkScreen } from "./client/start-work-screen";
 import { MENTIONS_KIND, MENTIONS_VERSION, MentionsSchema } from "./shared/mentions";
 import { NOTE_KIND, NOTE_VERSION, NoteSchema } from "./shared/note";
@@ -25,10 +25,6 @@ const SCREEN_COMMANDS = [
   { id: "start-work", title: "Lific: Start work on an issue", icon: "Play", keywords: ["issue", "worktree"], screenId: "start" },
   { id: "run-plan", title: "Lific: Run a plan", icon: "ListChecks", keywords: ["plan", "steps", "runner"], screenId: "plan" },
 ];
-
-function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
-  return <SidebarRow icon="SquareKanban" active={currentScreen !== null} onPress={() => openScreen({ screenId: "home" })} />;
-}
 
 export default function contribute(client: PluginClientContext) {
   // Screen props cannot open other plugin screens, so these screens receive the entry's openScreen.

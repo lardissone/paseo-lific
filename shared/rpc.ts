@@ -253,3 +253,10 @@ export const getHome = defineRpc({
   input: z.object({}),
   output: HomeSchema,
 });
+
+/** Counts for the sidebar badge: Lific issues waiting on a person and paused plan runs. */
+export const getAttention = defineRpc({
+  name: "lific.attention.get",
+  input: z.object({}),
+  output: z.object({ issues: z.number(), pausedRuns: z.number() }),
+});

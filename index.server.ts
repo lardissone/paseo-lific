@@ -5,6 +5,7 @@ import {
   addIssueComment,
   checkConnection,
   controlRun,
+  getAttention,
   getBriefing,
   getHome,
   getPlanPreview,
@@ -22,6 +23,7 @@ import {
 } from "./shared/rpc";
 import { lificSettings } from "./shared/settings";
 import { searchAttachments as searchLificAttachments } from "./server/attachments";
+import { loadAttention } from "./server/attention";
 import { runSlashCommand as runCommand } from "./server/commands";
 import { createConnection } from "./server/connection";
 import { listBranches as listGitBranches } from "./server/git";
@@ -97,6 +99,12 @@ export default function contribute(server: PluginServerContext) {
     const { client } = await connections.require();
     const fetchedAt = new Date().toISOString();
     return { markdown: await client.getBriefing(project, since), fetchedAt };
+  });
+  // Every connected app polls this for the sidebar badge, which also restarts the plan poller
+  // promptly after a daemon restart.
+  server.handle(getAttention, (_input, { paseo }) => {
+    withPaseo(paseo);
+    return loadAttention(connections, paseo);
   });
   server.handle(getHome, (_input, { paseo }) => {
     withPaseo(paseo);
