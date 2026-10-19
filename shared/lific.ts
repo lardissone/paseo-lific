@@ -94,3 +94,22 @@ export function resourceWebUrl(baseUrl: string, identifier: string, kind: "pages
   const project = index > 0 ? identifier.slice(0, index) : "DOC";
   return `${baseUrl.replace(/\/+$/, "")}/${project}/${kind}/${id}`;
 }
+
+export const IssueCardSchema = z.object({
+  identifier: z.string(),
+  title: z.string(),
+  status: IssueStatusSchema,
+  priority: z.string(),
+  url: z.string(),
+});
+export type IssueCard = z.output<typeof IssueCardSchema>;
+
+export function issueCard(baseUrl: string, issue: Issue): IssueCard {
+  return {
+    identifier: issue.identifier,
+    title: issue.title,
+    status: issue.status,
+    priority: issue.priority,
+    url: issueWebUrl(baseUrl, issue.identifier),
+  };
+}

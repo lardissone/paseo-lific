@@ -1,16 +1,19 @@
 import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
-import { type IssueStatus, issueWebUrl } from "../shared/lific";
-import type { ProjectResolution } from "../shared/rpc";
+import { type IssueCard, type IssueStatus, issueCard, issueWebUrl } from "../shared/lific";
+import type { Home, ProjectResolution } from "../shared/rpc";
 import { isConfigured, type LificSettings, lificSettings } from "../shared/settings";
 import { gitOptional, readLinkedIssue, writeLinkedIssue, clearLinkedIssue } from "./git";
 import { searchAttachments } from "./attachments";
+import { loadHome } from "./home";
 import { buildIssueInstructions } from "./issue-prompt";
-import { createLificClient, type LificClient } from "./lific-client";
+import { mentionedIssues } from "./mentions";
+import { createLificClient, type LificClient, type RepoResolution } from "./lific-client";
 import { computeRepoAliases } from "./repo-identity";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
 const RECENT_COMMENTS = 3;
+const BINDING_TTL_MS = 5 * 60_000;
 
 type SettingsHandle = PluginSettings<typeof lificSettings.schema>;
 
@@ -36,6 +39,21 @@ export function createLificService(settingsHandle: SettingsHandle) {
     };
   }
 
+  // Bindings change rarely and the home screen resolves every project, so cache them briefly.
+  let projectIdentifiers: { at: number; value: string[] } | null = null;
+  const bindings = new Map<string, { at: number; value: Promise<RepoResolution> }>();
+  function resolveBinding(client: LificClient, baseUrl: string, projectRoot: string): Promise<RepoResolution> {
+    const key = `${baseUrl}\n${projectRoot}`;
+    const cached = bindings.get(key);
+    if (cached && Date.now() - cached.at < BINDING_TTL_MS) return cached.value;
+    const value = computeRepoAliases(projectRoot).then((aliases) =>
+      aliases.length === 0 ? { resolution: "none" as const } : client.resolveRepo(aliases),
+    );
+    bindings.set(key, { at: Date.now(), value });
+    value.catch(() => bindings.delete(key));
+    return value;
+  }
+
   async function resolveProject(projectRoot: string): Promise<ProjectResolution> {
     const current = await settings();
     if (!isConfigured(current)) return { kind: "unconfigured" };
@@ -47,9 +65,7 @@ export function createLificService(settingsHandle: SettingsHandle) {
       if (project) return { kind: "resolved", project, source: "override" };
     }
 
-    const aliases = await computeRepoAliases(projectRoot);
-    if (aliases.length === 0) return { kind: "none" };
-    const resolution = await client.resolveRepo(aliases);
+    const resolution = await resolveBinding(client, current.baseUrl, projectRoot);
     switch (resolution.resolution) {
       case "none":
         return { kind: "none" };
@@ -65,6 +81,35 @@ export function createLificService(settingsHandle: SettingsHandle) {
     async connection(): Promise<{ client: LificClient; settings: LificSettings } | null> {
       const current = await settings();
       return isConfigured(current) ? connect() : null;
+    },
+
+    async home(paseo: PaseoApi): Promise<Home> {
+      const current = await settings();
+      if (!isConfigured(current)) {
+        return { configured: false, inProgress: [], needsYou: [], projects: [], unlinkedProjects: [] };
+      }
+      const client = createLificClient({ baseUrl: current.baseUrl, apiKey: current.apiKey });
+      return loadHome({ client, baseUrl: current.baseUrl, paseo, resolveProject });
+    },
+
+    async briefing(project: string, since: string | undefined) {
+      const { client } = await connect();
+      const fetchedAt = new Date().toISOString();
+      const markdown = await client.callTool("get_briefing", { project, ...(since ? { since } : {}) });
+      return { markdown, fetchedAt };
+    },
+
+    /** Cards for the Lific issues an agent mentioned in its last turn, or none. */
+    async mentionedIssueCards(timeline: Parameters<typeof mentionedIssues>[0]): Promise<IssueCard[]> {
+      const connection = await this.connection();
+      if (!connection) return [];
+      const { client, settings: current } = connection;
+      if (!projectIdentifiers || Date.now() - projectIdentifiers.at > BINDING_TTL_MS) {
+        projectIdentifiers = { at: Date.now(), value: (await client.listProjects()).map((p) => p.identifier) };
+      }
+      const identifiers = mentionedIssues(timeline, projectIdentifiers.value);
+      const issues = await Promise.all(identifiers.map((identifier) => client.getIssue(identifier).catch(() => null)));
+      return issues.flatMap((issue) => (issue ? [issueCard(current.baseUrl, issue)] : []));
     },
 
     async checkConnection() {

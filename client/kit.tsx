@@ -2,6 +2,9 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { type ReactNode, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
+/** Shared height so buttons and icon buttons line up in a row. */
+export const CONTROL_HEIGHT = 34;
+
 interface ButtonProps {
   theme: PluginTheme;
   label: string;
@@ -9,9 +12,11 @@ interface ButtonProps {
   variant?: "primary" | "secondary";
   disabled?: boolean;
   busy?: boolean;
+  /** Defaults to `flex-start` so buttons keep their width inside column layouts. */
+  alignSelf?: "flex-start" | "center";
 }
 
-export function Button({ theme, label, onPress, variant = "secondary", disabled, busy }: ButtonProps) {
+export function Button({ theme, label, onPress, variant = "secondary", disabled, busy, alignSelf = "flex-start" }: ButtonProps) {
   const primary = variant === "primary";
   const inactive = disabled || busy;
   return (
@@ -24,15 +29,16 @@ export function Button({ theme, label, onPress, variant = "secondary", disabled,
       style={{
         flexDirection: "row",
         alignItems: "center",
+        justifyContent: "center",
         gap: 6,
+        minHeight: CONTROL_HEIGHT,
         paddingHorizontal: 12,
-        paddingVertical: 7,
         borderRadius: 8,
         borderWidth: primary ? 0 : 1,
         borderColor: theme.colors.border,
         backgroundColor: primary ? theme.colors.accent : theme.colors.surface1,
         opacity: inactive ? 0.5 : 1,
-        alignSelf: "flex-start",
+        alignSelf,
       }}
     >
       {busy ? (
@@ -119,4 +125,49 @@ export function useDebounced<T>(value: T, delayMs: number): T {
     return () => clearTimeout(timer);
   }, [value, delayMs]);
   return debounced;
+}
+
+export function priorityColor(theme: PluginTheme, priority: string): string {
+  switch (priority) {
+    case "urgent":
+      return theme.colors.statusDanger;
+    case "high":
+      return theme.colors.statusWarning;
+    case "medium":
+      return theme.colors.accent;
+    default:
+      return theme.colors.border;
+  }
+}
+
+export function statusColor(theme: PluginTheme, status: string): string {
+  switch (status) {
+    case "active":
+      return theme.colors.accent;
+    case "done":
+      return theme.colors.statusSuccess;
+    case "cancelled":
+      return theme.colors.statusDanger;
+    case "todo":
+      return theme.colors.foregroundMuted;
+    default:
+      return theme.colors.border;
+  }
+}
+
+export function Card({ theme, children, onPress, label }: { theme: PluginTheme; children: ReactNode; onPress?(): void; label?: string }) {
+  const style = {
+    gap: 6,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+  };
+  if (!onPress) return <View style={style}>{children}</View>;
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [style, pressed ? { backgroundColor: theme.colors.surface2 } : null]}>
+      {children}
+    </Pressable>
+  );
 }

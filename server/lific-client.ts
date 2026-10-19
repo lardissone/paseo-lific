@@ -159,6 +159,15 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       );
     },
 
+    /** Open issues that need a person: assigned to the key's owner, marked for anyone, or waiting on them. */
+    attention(): Promise<{ assigned: Issue[]; human: Issue[]; waiting: Issue[] }> {
+      return call(
+        z.object({ assigned: z.array(IssueSchema), human: z.array(IssueSchema), waiting: z.array(IssueSchema) }),
+        "GET",
+        "/issues/attention",
+      );
+    },
+
     getPage(id: number): Promise<Page> {
       return call(PageSchema, "GET", `/pages/${id}`);
     },

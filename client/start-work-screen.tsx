@@ -71,6 +71,14 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
     setProvider((match ?? providers.data.find((option) => option.isDefault) ?? providers.data[0]!).value);
   }, [provider, providers.data, values?.defaultProvider]);
 
+  // Opened from the home screen with an issue: select it as soon as it is listed.
+  const requested = params.identifier;
+  useEffect(() => {
+    if (!requested || issue) return;
+    const match = issues.data?.issues.find((candidate) => candidate.identifier === requested);
+    if (match) pickIssue(match);
+  }, [requested, issue, issues.data]);
+
   function pickIssue(next: IssueSummary) {
     setIssue(next);
     const name = renderBranchName(values?.branchTemplate ?? "{slug}", next);
@@ -113,6 +121,13 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
       style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
       contentContainerStyle={{ padding: layout.compact ? 16 : 24, gap: 20, maxWidth: 760 }}
     >
+      <View style={{ gap: 2 }}>
+        <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700" }}>Start work</Text>
+        <Text style={{ color: theme.colors.foregroundMuted }}>
+          Pick an issue and Paseo creates a worktree on a new branch and starts an agent on it.
+        </Text>
+      </View>
+
       {values && !values.baseUrl ? (
         <Message theme={theme} tone="danger">
           Lific is not configured. Open Settings → Plugins → Lific to add the URL and API key.
@@ -192,7 +207,10 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
                     backgroundColor: selected ? theme.colors.surface2 : "transparent",
                   }}
                 >
-                  <Text style={{ color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"], minWidth: 64 }}>
+                  <Text
+                    numberOfLines={1}
+                    style={{ color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"], minWidth: 64, flexShrink: 0 }}
+                  >
                     {candidate.identifier}
                   </Text>
                   <Text style={{ color: theme.colors.foreground, flex: 1 }} numberOfLines={2}>

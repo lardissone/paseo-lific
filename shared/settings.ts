@@ -20,6 +20,8 @@ export const lificSettings = defineSettings({
     projectOverrides: z.record(z.string(), z.string()).default({}),
     /** Paseo project root path → last base branch picked in Start work. */
     lastBaseBranch: z.record(z.string(), z.string()).default({}),
+    /** Lific project identifier → when its briefing was last shown, for "since last time". */
+    briefingSeenAt: z.record(z.string(), z.string()).default({}),
   }),
 });
 

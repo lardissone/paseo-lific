@@ -1,6 +1,6 @@
 import { defineAttachmentSource, defineRpc, PluginAttachmentSearchPayloadSchema } from "@getpaseo/plugin";
 import { z } from "zod";
-import { CommentSchema, IssueSchema, IssueStatusSchema, ProjectSummarySchema } from "./lific";
+import { CommentSchema, IssueCardSchema, IssueSchema, IssueStatusSchema, ProjectSummarySchema } from "./lific";
 
 export const IssueSummarySchema = z.object({
   identifier: z.string(),
@@ -120,4 +120,35 @@ export const runSlashCommand = defineRpc({
     projectRoot: z.string(),
   }),
   output: z.object({}),
+});
+
+export const HomeSchema = z.object({
+  configured: z.boolean(),
+  inProgress: z.array(
+    z.object({ workspaceId: z.string(), workspaceName: z.string(), issue: IssueCardSchema }),
+  ),
+  needsYou: z.array(
+    IssueCardSchema.extend({ reason: z.enum(["assigned", "human", "waiting"]), projectName: z.string() }),
+  ),
+  projects: z.array(
+    z.object({
+      project: ProjectSummarySchema,
+      projectRoot: z.string(),
+      ready: z.array(IssueCardSchema),
+    }),
+  ),
+  unlinkedProjects: z.array(ProjectSummarySchema),
+});
+export type Home = z.output<typeof HomeSchema>;
+
+export const getHome = defineRpc({
+  name: "lific.home.get",
+  input: z.object({}),
+  output: HomeSchema,
+});
+
+export const getBriefing = defineRpc({
+  name: "lific.briefing.get",
+  input: z.object({ project: z.string(), since: z.string().optional() }),
+  output: z.object({ markdown: z.string(), fetchedAt: z.string() }),
 });

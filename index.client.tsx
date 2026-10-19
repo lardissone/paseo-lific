@@ -3,7 +3,10 @@ import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { IssuePanel } from "./client/issue-panel";
 import { LificSettingsScreen } from "./client/settings-screen";
 import { StartWorkScreen } from "./client/start-work-screen";
+import { createHomeScreen } from "./client/home-screen";
+import { MentionsRow } from "./client/mentions-row";
 import { NoteCard } from "./client/note-card";
+import { MENTIONS_KIND, MENTIONS_VERSION, MentionsSchema } from "./shared/mentions";
 import { NOTE_KIND, NOTE_VERSION, NoteSchema } from "./shared/note";
 import { lificAttachments, runSlashCommand, type SlashCommand } from "./shared/rpc";
 
@@ -19,16 +22,18 @@ function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps)
   return (
     <SidebarRow
       icon="SquareKanban"
-      active={currentScreen?.screenId === "start"}
-      onPress={() => openScreen({ screenId: "start" })}
+      active={currentScreen?.screenId === "home" || currentScreen?.screenId === "start"}
+      onPress={() => openScreen({ screenId: "home" })}
     />
   );
 }
 
 export default function contribute(client: PluginClientContext) {
+  client.addScreen({ id: "home", title: "Lific", Component: createHomeScreen(client.openScreen) });
   client.addScreen({ id: "start", title: "Start work from Lific", Component: StartWorkScreen });
-  client.addSidebarHeaderItem({ id: "start", title: "Lific", Component: LificSidebarItem });
+  client.addSidebarHeaderItem({ id: "home", title: "Lific", Component: LificSidebarItem });
   client.addAttachmentSource(lificAttachments);
+  client.addTimelineRenderer({ kind: MENTIONS_KIND, version: MENTIONS_VERSION, schema: MentionsSchema, Component: MentionsRow });
   client.addTimelineRenderer({ kind: NOTE_KIND, version: NOTE_VERSION, schema: NoteSchema, Component: NoteCard });
   for (const command of SLASH_COMMANDS) {
     client.addSlashCommand({
@@ -82,6 +87,16 @@ export default function contribute(client: PluginClientContext) {
     context: "workspace",
     onSelect({ openPanel }) {
       openPanel("issue");
+    },
+  });
+  client.addCommandCenterItem({
+    id: "home",
+    title: "Lific: Open home",
+    icon: "SquareKanban",
+    keywords: ["queue", "briefing", "issues"],
+    context: "global",
+    onSelect({ openScreen }) {
+      openScreen({ screenId: "home" });
     },
   });
   client.addCommandCenterItem({

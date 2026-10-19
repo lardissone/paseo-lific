@@ -1,7 +1,10 @@
-import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
+import { MENTIONS_KIND, MENTIONS_VERSION } from "./shared/mentions";
 import {
   addIssueComment,
   checkConnection,
+  getBriefing,
+  getHome,
   getWorkspaceIssue,
   linkWorkspaceIssue,
   listBranches,
@@ -42,6 +45,8 @@ export default function contribute(server: PluginServerContext) {
     });
     return {};
   });
+  server.handle(getHome, (_input, { paseo }) => lific.home(paseo));
+  server.handle(getBriefing, ({ project, since }) => lific.briefing(project, since));
   server.handle(startWork, (input, { paseo }) => lific.startWork(input, paseo));
 
   server.before("agent.create", async ({ request }) => {
@@ -68,12 +73,34 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.permission_resolved", ({ agent, requestId }) => {
     void reporter.questionResolved(agent.cwd, requestId);
   });
-  server.on("agent.turn_ended", ({ agent, outcome }) => {
+  server.on("agent.turn_ended", ({ agent, outcome, turnId, timeline }, { paseo }) => {
     void reporter.turnEnded(agent.cwd, outcome);
+    if (outcome.kind === "completed") void appendMentions(paseo, agent.id, turnId, timeline);
   });
   server.on("workspace.archived", ({ workspace }, { paseo }) => {
     void reporter.workspaceArchived(workspace, paseo);
   });
+
+  async function appendMentions(
+    paseo: PluginHandlerContext["paseo"],
+    agentId: string,
+    turnId: string | null,
+    timeline: Parameters<typeof lific.mentionedIssueCards>[0],
+  ) {
+    try {
+      const issues = await lific.mentionedIssueCards(timeline);
+      if (issues.length === 0) return;
+      await paseo.agents.ref(agentId).timeline.append({
+        type: "plugin",
+        id: `mentions-${turnId ?? Date.now()}`,
+        kind: MENTIONS_KIND,
+        version: MENTIONS_VERSION,
+        data: { issues },
+      });
+    } catch (error) {
+      console.error("Lific mentions failed:", error instanceof Error ? error.message : error);
+    }
+  }
 
   return () => {};
 }
