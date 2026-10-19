@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlanStep } from "../shared/lific";
-import { type Leaf, nextRunAction, planLeaves } from "./plan-steps";
+import { finishedParents, type Leaf, nextRunAction, planLeaves } from "./plan-steps";
 import type { RunRecord } from "./run-store";
 
 function step(id: number, fields: Partial<PlanStep> = {}): PlanStep {
@@ -34,6 +34,22 @@ describe("planLeaves", () => {
       [3, null, false, false],
       [4, "MIO-4", false, true],
     ]);
+  });
+});
+
+describe("finishedParents", () => {
+  it("finds unchecked parents whose children are all finished, deepest first", () => {
+    const steps = [
+      step(1, {
+        children: [
+          step(2, { children: [step(3, { done: true }), step(4, { issue_status: "done" })] }),
+          step(5, { done: true }),
+        ],
+      }),
+      step(6, { children: [step(7, { done: true }), step(8)] }),
+      step(9, { done: true, children: [step(10, { done: true })] }),
+    ];
+    expect(finishedParents(steps).map((s) => s.id)).toEqual([2, 1]);
   });
 });
 

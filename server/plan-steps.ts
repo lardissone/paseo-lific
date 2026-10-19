@@ -16,6 +16,20 @@ export function stepFinished(step: PlanStep): boolean {
   return step.done || step.issue_status === "done";
 }
 
+/**
+ * Parent steps whose children are all finished but that are not checked themselves. Lific does
+ * not close a parent on its own, so without this a plan never reaches 100%. Deepest first, so
+ * checking them in order also completes grandparents on the next pass.
+ */
+export function finishedParents(steps: readonly PlanStep[]): PlanStep[] {
+  const allFinished = (step: PlanStep): boolean =>
+    step.children.length === 0 ? stepFinished(step) : step.children.every(allFinished);
+  return flattenSteps(steps)
+    .filter(({ step }) => step.children.length > 0 && !step.done && step.children.every(allFinished))
+    .sort((a, b) => b.depth - a.depth)
+    .map(({ step }) => step);
+}
+
 export interface Leaf {
   stepId: number;
   title: string;

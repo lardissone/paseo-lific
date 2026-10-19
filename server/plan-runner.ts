@@ -16,7 +16,7 @@ import {
 } from "./git";
 import type { LificClient } from "./lific-client";
 import { appendNote } from "./notes";
-import { type Leaf, nextRunAction, planLeaves } from "./plan-steps";
+import { finishedParents, type Leaf, nextRunAction, planLeaves } from "./plan-steps";
 import { deleteRun, linkedBranches, listRuns, readRun, type RunRecord, worktreeForBranch, writeRun } from "./run-store";
 
 type PaseoApi = PluginHandlerContext["paseo"];
@@ -69,6 +69,7 @@ export function createPlanRunner({ connections, startWork }: PlanRunnerDeps) {
       const run = await readRun(repo, planIdentifier);
       if (run?.status !== "running") return;
       const plan = await client.resolvePlan(planIdentifier);
+      for (const parent of finishedParents(plan.steps)) await client.checkPlanStep(plan, parent.id);
       const leaves = planLeaves(plan.steps);
       const branches = await linkedBranches(repo);
       const branchOf = (issue: string) => branches.get(issue) ?? null;

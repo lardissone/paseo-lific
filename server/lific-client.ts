@@ -230,6 +230,10 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       await call(z.unknown(), "PUT", `/plans/${plan.id}/steps/${stepId}`, { issue_id: issueId });
     },
 
+    async checkPlanStep(plan: Plan, stepId: number): Promise<void> {
+      await call(z.unknown(), "PUT", `/plans/${plan.id}/steps/${stepId}`, { done: true });
+    },
+
     /** Markdown project briefing; MCP only, Lific has no REST route for it. */
     getBriefing(project: string, since?: string): Promise<string> {
       return callTool("get_briefing", { project, ...(since ? { since } : {}) });
