@@ -6,6 +6,7 @@ import { StartWorkScreen } from "./client/start-work-screen";
 import { createHomeScreen } from "./client/home-screen";
 import { MentionsRow } from "./client/mentions-row";
 import { NoteCard } from "./client/note-card";
+import { createRunPlanScreen } from "./client/run-plan-screen";
 import { MENTIONS_KIND, MENTIONS_VERSION, MentionsSchema } from "./shared/mentions";
 import { NOTE_KIND, NOTE_VERSION, NoteSchema } from "./shared/note";
 import { lificAttachments, runSlashCommand, type SlashCommand } from "./shared/rpc";
@@ -22,7 +23,7 @@ function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps)
   return (
     <SidebarRow
       icon="SquareKanban"
-      active={currentScreen?.screenId === "home" || currentScreen?.screenId === "start"}
+      active={currentScreen !== null}
       onPress={() => openScreen({ screenId: "home" })}
     />
   );
@@ -30,6 +31,7 @@ function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps)
 
 export default function contribute(client: PluginClientContext) {
   client.addScreen({ id: "home", title: "Lific", Component: createHomeScreen(client.openScreen) });
+  client.addScreen({ id: "plan", title: "Run a plan", Component: createRunPlanScreen(client.openScreen) });
   client.addScreen({ id: "start", title: "Start work from Lific", Component: StartWorkScreen });
   client.addSidebarHeaderItem({ id: "home", title: "Lific", Component: LificSidebarItem });
   client.addAttachmentSource(lificAttachments);
@@ -97,6 +99,16 @@ export default function contribute(client: PluginClientContext) {
     context: "global",
     onSelect({ openScreen }) {
       openScreen({ screenId: "home" });
+    },
+  });
+  client.addCommandCenterItem({
+    id: "run-plan",
+    title: "Lific: Run a plan",
+    icon: "ListChecks",
+    keywords: ["plan", "steps", "runner"],
+    context: "global",
+    onSelect({ openScreen }) {
+      openScreen({ screenId: "plan" });
     },
   });
   client.addCommandCenterItem({

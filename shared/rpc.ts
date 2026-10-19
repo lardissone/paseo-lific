@@ -47,6 +47,17 @@ export const getWorkspaceIssue = defineRpc({
     comments: z.array(CommentSchema),
     url: z.string().nullable(),
     error: z.string().nullable(),
+    /** Present when a plan run started this workspace for one of its steps. */
+    run: z
+      .object({
+        projectRoot: z.string(),
+        plan: z.string(),
+        index: z.number(),
+        total: z.number(),
+        status: z.enum(["running", "paused", "done", "stopped"]).nullable(),
+        reason: z.string().nullable(),
+      })
+      .nullable(),
   }),
 });
 
@@ -122,6 +133,81 @@ export const runSlashCommand = defineRpc({
   output: z.object({}),
 });
 
+export const getBriefing = defineRpc({
+  name: "lific.briefing.get",
+  input: z.object({ project: z.string(), since: z.string().optional() }),
+  output: z.object({ markdown: z.string(), fetchedAt: z.string() }),
+});
+
+export const PlanSummarySchema = z.object({
+  identifier: z.string(),
+  title: z.string(),
+  status: z.string(),
+  stepCount: z.number(),
+  doneCount: z.number(),
+});
+export type PlanSummary = z.output<typeof PlanSummarySchema>;
+
+export const listPlans = defineRpc({
+  name: "lific.plans.list",
+  input: z.object({ projectRoot: z.string() }),
+  output: z.object({ plans: z.array(PlanSummarySchema) }),
+});
+
+export const PlanPreviewStepSchema = z.object({
+  depth: z.number(),
+  title: z.string(),
+  issue: z.string().nullable(),
+  done: z.boolean(),
+});
+
+export const getPlanPreview = defineRpc({
+  name: "lific.plans.preview",
+  input: z.object({ identifier: z.string() }),
+  output: z.object({ steps: z.array(PlanPreviewStepSchema) }),
+});
+
+export const RunModeSchema = z.enum(["review", "continuous"]);
+export const RunBranchingSchema = z.enum(["stacked", "base"]);
+
+export const startRun = defineRpc({
+  name: "lific.run.start",
+  input: z.object({
+    projectRoot: z.string(),
+    plan: z.string(),
+    mode: RunModeSchema,
+    branching: RunBranchingSchema,
+    base: z.string().min(1),
+    provider: z.string().min(1),
+    /** Archive a step's workspace once the next stacked step starts from its branch. */
+    archivePrevious: z.boolean(),
+  }),
+  output: z.object({}),
+});
+
+export const controlRun = defineRpc({
+  name: "lific.run.control",
+  input: z.object({
+    projectRoot: z.string(),
+    plan: z.string(),
+    action: z.enum(["continue", "pause", "stop"]),
+  }),
+  output: z.object({}),
+});
+
+export const RunSummarySchema = z.object({
+  projectRoot: z.string(),
+  plan: z.string(),
+  title: z.string(),
+  status: z.enum(["running", "paused", "done", "stopped"]),
+  reason: z.string().nullable(),
+  mode: RunModeSchema,
+  doneCount: z.number(),
+  stepCount: z.number(),
+  current: z.object({ identifier: z.string(), title: z.string() }).nullable(),
+});
+export type RunSummary = z.output<typeof RunSummarySchema>;
+
 export const HomeSchema = z.object({
   configured: z.boolean(),
   inProgress: z.array(
@@ -138,6 +224,7 @@ export const HomeSchema = z.object({
     }),
   ),
   unlinkedProjects: z.array(ProjectSummarySchema),
+  runs: z.array(RunSummarySchema),
 });
 export type Home = z.output<typeof HomeSchema>;
 
@@ -145,10 +232,4 @@ export const getHome = defineRpc({
   name: "lific.home.get",
   input: z.object({}),
   output: HomeSchema,
-});
-
-export const getBriefing = defineRpc({
-  name: "lific.briefing.get",
-  input: z.object({ project: z.string(), since: z.string().optional() }),
-  output: z.object({ markdown: z.string(), fetchedAt: z.string() }),
 });

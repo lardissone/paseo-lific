@@ -18,9 +18,12 @@ Lific is a local-first issue tracker. This plugin lets you start agent work from
   - When agent turns start failing, one comment with the error. It reports again only after a turn succeeds.
   - When the workspace is archived while the issue is still active, the issue moves back to todo with a comment.
 
+- **Home.** The Lific sidebar item opens a home with plan runs, issues agents are working on, issues waiting on a person, workable issues ready to start, and a project briefing that shows what changed since you last looked. When an agent mentions issues in a reply, a row of issue chips follows it in the timeline.
+- **Plan runs.** Pick a Lific plan and Paseo works through its steps in order, one worktree and agent per step. Steps without an issue get one. You choose whether the run pauses after each step for your review or runs straight through, and whether each step branches off the previous step's branch or off a base branch. Agents commit on their branch and close the step's issue; they do not open pull requests unless asked. A failed turn or a cancelled step pauses the run.
+
 ## How linking works
 
-The link between a workspace and an issue is stored in the repository's local git config (`branch.<name>.lificIssue`), together with the small amount of state the lifecycle updates need. It is shared by every worktree of the repository, follows branch renames, and is never pushed. Branch names default to the issue title only, so Lific identifiers stay out of the shared repository. With the private tracker setting on, agents are also told not to mention Lific identifiers or links in commits and pull requests.
+The link between a workspace and an issue is stored in the repository's local git config (`branch.<name>.lificIssue`), together with the small amount of state the lifecycle updates need. Plan runs are stored the same way, under `lific-run.<plan>`, so they keep going after a restart. It is shared by every worktree of the repository, follows branch renames, and is never pushed. Branch names default to the issue title only, so Lific identifiers stay out of the shared repository. With the private tracker setting on, agents are also told not to mention Lific identifiers or links in commits and pull requests.
 
 ## Setup
 

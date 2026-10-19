@@ -1,15 +1,14 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { issueWebUrl } from "../shared/lific";
-import { NOTE_KIND, NOTE_VERSION, type Note } from "../shared/note";
+import type { Note } from "../shared/note";
 import type { ProjectResolution, SlashCommand } from "../shared/rpc";
 import { readLinkedIssue, writeLinkedIssue } from "./git";
 import type { LificClient } from "./lific-client";
+import { appendNote } from "./notes";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
 const MAX_TITLE = 120;
-// Timeline rows are capped at 64 KiB serialized; leave room for the envelope.
-const MAX_NOTE_BODY = 48_000;
 
 interface CommandDeps {
   connect(): Promise<{ client: LificClient; baseUrl: string }>;
@@ -26,18 +25,7 @@ interface CommandInput {
 
 export async function runSlashCommand(input: CommandInput, paseo: PaseoApi, deps: CommandDeps): Promise<void> {
   const note = await commandNote(input, deps);
-  await paseo.agents.ref(input.agentId).timeline.append({
-    type: "plugin",
-    id: `${input.command}-${Date.now()}`,
-    kind: NOTE_KIND,
-    version: NOTE_VERSION,
-    data: {
-      title: note.title,
-      tone: note.tone ?? "info",
-      ...(note.body ? { body: note.body.length > MAX_NOTE_BODY ? `${note.body.slice(0, MAX_NOTE_BODY)}…` : note.body } : {}),
-      ...(note.url ? { url: note.url } : {}),
-    },
-  });
+  await appendNote(paseo, input.agentId, `${input.command}-${Date.now()}`, note);
 }
 
 async function commandNote(input: CommandInput, deps: CommandDeps): Promise<Note> {

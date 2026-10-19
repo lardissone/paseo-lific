@@ -36,7 +36,9 @@ export type BranchKey =
   /** JSON array of the issue's assignees before the first pending question. */
   | "lificAssigneesBeforeQuestion"
   /** Set while turns keep failing, so a failure streak is reported once. */
-  | "lificFailing";
+  | "lificFailing"
+  /** `<PLAN-ID> <index>/<total>` when a plan run started this branch for one of its steps. */
+  | "lificRunStep";
 
 export async function locateBranch(cwd: string): Promise<BranchLocation | null> {
   const branch = await gitOptional(cwd, ["branch", "--show-current"]);
@@ -69,4 +71,16 @@ export async function writeLinkedIssue(cwd: string, identifier: string): Promise
 export async function clearLinkedIssue(cwd: string): Promise<void> {
   const location = await locateBranch(cwd);
   if (location) await unsetBranchConfig(location, "lificIssue");
+}
+
+export async function writeRunStep(cwd: string, step: { plan: string; index: number; total: number }): Promise<void> {
+  const location = await locateBranch(cwd);
+  if (location) await writeBranchConfig(location, "lificRunStep", `${step.plan} ${step.index}/${step.total}`);
+}
+
+export async function readRunStep(cwd: string): Promise<{ plan: string; index: number; total: number } | null> {
+  const location = await locateBranch(cwd);
+  const value = location ? await readBranchConfig(location, "lificRunStep") : null;
+  const match = value ? /^(\S+) (\d+)\/(\d+)$/.exec(value) : null;
+  return match ? { plan: match[1]!, index: Number(match[2]), total: Number(match[3]) } : null;
 }

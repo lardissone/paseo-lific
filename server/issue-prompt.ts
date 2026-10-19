@@ -13,8 +13,9 @@ export function buildIssueInstructions(input: {
   comments: Comment[];
   url: string;
   privateTracker: boolean;
+  step?: { plan: string; index: number; total: number } | null;
 }): string {
-  const { issue, comments, url, privateTracker } = input;
+  const { issue, comments, url, privateTracker, step } = input;
   const lines = [
     `## Lific issue ${issue.identifier}`,
     "",
@@ -41,6 +42,12 @@ export function buildIssueInstructions(input: {
     `- When the work is finished, set ${issue.identifier} to done with a short summary of what you changed and how you verified it.`,
     "- Comment on the issue only for things worth keeping: decisions, blockers, or the final summary. Do not narrate each step.",
   );
+  if (step) {
+    lines.push(
+      `- This is step ${step.index} of ${step.total} in the Lific plan ${step.plan}. The next step branches off this branch, so commit your work here before you set the issue to done.`,
+      "- Do not open a pull request unless you are asked to.",
+    );
+  }
   if (privateTracker) {
     lines.push(
       `- The tracker is private. Never mention ${issue.identifier} or any other Lific identifier or URL in branch names, commit messages, pull request titles, or pull request descriptions.`,

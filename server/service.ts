@@ -2,7 +2,9 @@ import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/serv
 import { type IssueCard, type IssueStatus, issueCard, issueWebUrl } from "../shared/lific";
 import type { Home, ProjectResolution } from "../shared/rpc";
 import { isConfigured, type LificSettings, lificSettings } from "../shared/settings";
-import { gitOptional, readLinkedIssue, writeLinkedIssue, clearLinkedIssue } from "./git";
+import { clearLinkedIssue, gitOptional, readLinkedIssue, readRunStep, writeLinkedIssue, writeRunStep } from "./git";
+import { repositoryRoot, type RunStep } from "./plan-runner";
+import { readRun } from "./run-store";
 import { searchAttachments } from "./attachments";
 import { loadHome } from "./home";
 import { buildIssueInstructions } from "./issue-prompt";
@@ -86,7 +88,7 @@ export function createLificService(settingsHandle: SettingsHandle) {
     async home(paseo: PaseoApi): Promise<Home> {
       const current = await settings();
       if (!isConfigured(current)) {
-        return { configured: false, inProgress: [], needsYou: [], projects: [], unlinkedProjects: [] };
+        return { configured: false, inProgress: [], needsYou: [], projects: [], unlinkedProjects: [], runs: [] };
       }
       const client = createLificClient({ baseUrl: current.baseUrl, apiKey: current.apiKey });
       return loadHome({ client, baseUrl: current.baseUrl, paseo, resolveProject });
@@ -112,6 +114,43 @@ export function createLificService(settingsHandle: SettingsHandle) {
       return issues.flatMap((issue) => (issue ? [issueCard(current.baseUrl, issue)] : []));
     },
 
+    async listPlans(projectRoot: string) {
+      const { client } = await connect();
+      const resolution = await resolveProject(projectRoot);
+      if (resolution.kind !== "resolved") {
+        throw new Error("This project is not bound to a Lific project. Run `lific bind` or pick one in settings.");
+      }
+      const plans = await client.listPlans(resolution.project.id);
+      return {
+        plans: plans.map((plan) => ({
+          identifier: plan.identifier,
+          title: plan.title,
+          status: plan.status,
+          stepCount: plan.step_count,
+          doneCount: plan.done_count,
+        })),
+      };
+    },
+
+    async planPreview(identifier: string) {
+      const { client } = await connect();
+      const plan = await client.resolvePlan(identifier);
+      const steps: { depth: number; title: string; issue: string | null; done: boolean }[] = [];
+      const walk = (nodes: typeof plan.steps, depth: number) => {
+        for (const node of nodes) {
+          steps.push({
+            depth,
+            title: node.title,
+            issue: node.issue_identifier ?? null,
+            done: node.done || node.issue_status === "done",
+          });
+          walk(node.children, depth + 1);
+        }
+      };
+      walk(plan.steps, 0);
+      return { steps };
+    },
+
     async checkConnection() {
       try {
         const { client } = await connect();
@@ -126,7 +165,8 @@ export function createLificService(settingsHandle: SettingsHandle) {
     async workspaceIssue(directory: string) {
       const identifier = await readLinkedIssue(directory);
       const current = await settings();
-      const empty = { identifier, issue: null, comments: [], url: null, error: null };
+      const run = await workspaceRun(directory);
+      const empty = { identifier, issue: null, comments: [], url: null, error: null, run };
       if (!isConfigured(current)) return { ...empty, configured: false };
       if (!identifier) return { ...empty, configured: true };
       const client = createLificClient({ baseUrl: current.baseUrl, apiKey: current.apiKey });
@@ -140,6 +180,7 @@ export function createLificService(settingsHandle: SettingsHandle) {
           comments,
           url: issueWebUrl(current.baseUrl, identifier),
           error: null,
+          run,
         };
       } catch (error) {
         return { ...empty, configured: true, error: errorMessage(error) };
@@ -215,7 +256,15 @@ export function createLificService(settingsHandle: SettingsHandle) {
     },
 
     async startWork(
-      input: { identifier: string; projectRoot: string; baseBranch: string; branchName: string; provider: string },
+      input: {
+        identifier: string;
+        projectRoot: string;
+        baseBranch: string;
+        branchName: string;
+        provider: string;
+        /** Set when a plan run starts this issue as one of its steps. */
+        step?: RunStep;
+      },
       paseo: PaseoApi,
     ) {
       const { client } = await connect();
@@ -235,16 +284,22 @@ export function createLificService(settingsHandle: SettingsHandle) {
       if (!directory) throw new Error("Paseo created the workspace without a directory.");
       // Link before the agent exists so the agent.create hook sees the issue.
       await writeLinkedIssue(directory, issue.identifier);
+      const step = input.step;
+      if (step) await writeRunStep(directory, step);
 
       const agent = await workspace.agents.create({
         config: { provider: input.provider },
-        prompt: `Work on Lific issue ${issue.identifier}: ${issue.title}. The issue details are in your instructions.`,
+        prompt: step
+          ? `Work on Lific issue ${issue.identifier}: ${issue.title}. It is step ${step.index} of ${step.total} in ${step.plan}. The details are in your instructions.`
+          : `Work on Lific issue ${issue.identifier}: ${issue.title}. The issue details are in your instructions.`,
       });
 
       const started = issue.status === "active" ? issue : await client.updateIssueByIdentifier(issue.identifier, { status: "active" });
       await client.addComment(
         started,
-        `Started in Paseo on branch \`${input.branchName}\` from \`${input.baseBranch}\` (${input.provider}).`,
+        `Started in Paseo on branch \`${input.branchName}\` from \`${input.baseBranch}\` (${input.provider})${
+          step ? `, as step ${step.index} of ${step.total} in ${step.plan}` : ""
+        }.`,
       );
       return { workspaceId: workspace.id, agentId: agent.id };
     },
@@ -263,12 +318,26 @@ export function createLificService(settingsHandle: SettingsHandle) {
         comments,
         url: issueWebUrl(current.baseUrl, identifier),
         privateTracker: current.privateTracker,
+        step: await readRunStep(cwd),
       });
     },
   };
 }
 
 export type LificService = ReturnType<typeof createLificService>;
+
+async function workspaceRun(directory: string) {
+  const step = await readRunStep(directory);
+  if (!step) return null;
+  const projectRoot = await repositoryRoot(directory);
+  const record = projectRoot ? await readRun(projectRoot, step.plan) : null;
+  return {
+    ...step,
+    projectRoot: projectRoot ?? directory,
+    status: record?.status ?? null,
+    reason: record?.reason ?? null,
+  };
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

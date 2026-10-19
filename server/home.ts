@@ -3,6 +3,8 @@ import { issueCard, type ProjectSummary } from "../shared/lific";
 import type { Home, ProjectResolution } from "../shared/rpc";
 import { readLinkedIssue } from "./git";
 import type { LificClient } from "./lific-client";
+import { planLeaves } from "./plan-steps";
+import { listRuns } from "./run-store";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
@@ -74,11 +76,38 @@ export async function loadHome({ client, baseUrl, paseo, resolveProject }: HomeD
     }),
   );
 
+  const runs = (
+    await Promise.all([...new Set(rootsByProject.values())].map((root) => loadRuns(client, root)))
+  ).flat();
+
   return {
     configured: true,
+    runs,
     inProgress,
     needsYou,
     projects: projects.filter((entry) => entry.ready.length > 0),
     unlinkedProjects: lificProjects.filter((project) => !rootsByProject.has(project.id)),
   };
+}
+
+async function loadRuns(client: LificClient, repo: string): Promise<Home["runs"]> {
+  const runs = (await listRuns(repo)).filter((run) => run.status !== "stopped");
+  return Promise.all(
+    runs.map(async (run) => {
+      const plan = await client.resolvePlan(run.plan).catch(() => null);
+      const leaves = plan ? planLeaves(plan.steps) : [];
+      const current = leaves.find((leaf) => !leaf.finished);
+      return {
+        projectRoot: repo,
+        plan: run.plan,
+        title: plan?.title ?? run.plan,
+        status: run.status,
+        reason: run.reason ?? null,
+        mode: run.mode,
+        doneCount: leaves.filter((leaf) => leaf.finished).length,
+        stepCount: leaves.length,
+        current: current ? { identifier: current.issue ?? "", title: current.title } : null,
+      };
+    }),
+  );
 }

@@ -3,6 +3,10 @@ import { MENTIONS_KIND, MENTIONS_VERSION } from "./shared/mentions";
 import {
   addIssueComment,
   checkConnection,
+  controlRun,
+  getPlanPreview,
+  listPlans,
+  startRun,
   getBriefing,
   getHome,
   getWorkspaceIssue,
@@ -17,11 +21,22 @@ import {
 } from "./shared/rpc";
 import { lificSettings } from "./shared/settings";
 import { runSlashCommand as runCommand } from "./server/commands";
+import { readLinkedIssue } from "./server/git";
 import { createLifecycleReporter } from "./server/lifecycle";
+import { createPlanRunner } from "./server/plan-runner";
 import { createLificService } from "./server/service";
 
 export default function contribute(server: PluginServerContext) {
   const lific = createLificService(server.registerSettings(lificSettings));
+  const runner = createPlanRunner({
+    async connection() {
+      const connection = await lific.connection();
+      return connection
+        ? { client: connection.client, baseUrl: connection.settings.baseUrl, branchTemplate: connection.settings.branchTemplate }
+        : null;
+    },
+    startWork: (input, paseo) => lific.startWork(input, paseo),
+  });
 
   server.handle(checkConnection, () => lific.checkConnection());
   server.handle(resolveProject, ({ projectRoot }) => lific.resolveProject(projectRoot));
@@ -45,7 +60,22 @@ export default function contribute(server: PluginServerContext) {
     });
     return {};
   });
-  server.handle(getHome, (_input, { paseo }) => lific.home(paseo));
+  server.handle(getHome, (_input, { paseo }) => {
+    runner.ensurePolling(paseo);
+    return lific.home(paseo);
+  });
+  server.handle(listPlans, ({ projectRoot }) => lific.listPlans(projectRoot));
+  server.handle(getPlanPreview, ({ identifier }) => lific.planPreview(identifier));
+  server.handle(startRun, async ({ projectRoot, archivePrevious, ...run }, { paseo }) => {
+    runner.ensurePolling(paseo);
+    await runner.start(projectRoot, { ...run, archive: archivePrevious ? "yes" : "no" }, paseo);
+    return {};
+  });
+  server.handle(controlRun, async ({ projectRoot, plan, action }, { paseo }) => {
+    runner.ensurePolling(paseo);
+    await runner.control(projectRoot, plan, action, paseo);
+    return {};
+  });
   server.handle(getBriefing, ({ project, since }) => lific.briefing(project, since));
   server.handle(startWork, (input, { paseo }) => lific.startWork(input, paseo));
 
@@ -74,8 +104,15 @@ export default function contribute(server: PluginServerContext) {
     void reporter.questionResolved(agent.cwd, requestId);
   });
   server.on("agent.turn_ended", ({ agent, outcome, turnId, timeline }, { paseo }) => {
+    runner.ensurePolling(paseo);
     void reporter.turnEnded(agent.cwd, outcome);
-    if (outcome.kind === "completed") void appendMentions(paseo, agent.id, turnId, timeline);
+    if (outcome.kind === "completed") {
+      void appendMentions(paseo, agent.id, turnId, timeline);
+      void runner.onActivity(agent.cwd, paseo);
+    }
+    if (outcome.kind === "failed") {
+      void readLinkedIssue(agent.cwd).then((issue) => (issue ? runner.pauseForFailure(agent.cwd, issue) : undefined));
+    }
   });
   server.on("workspace.archived", ({ workspace }, { paseo }) => {
     void reporter.workspaceArchived(workspace, paseo);
@@ -102,5 +139,5 @@ export default function contribute(server: PluginServerContext) {
     }
   }
 
-  return () => {};
+  return () => runner.stop();
 }

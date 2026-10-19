@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { ISSUE_STATUSES, type IssueStatus } from "../shared/lific";
-import { addIssueComment, getWorkspaceIssue, linkWorkspaceIssue, setIssueStatus } from "../shared/rpc";
+import { addIssueComment, controlRun, getWorkspaceIssue, linkWorkspaceIssue, setIssueStatus } from "../shared/rpc";
 import { Button, Chip, Message, Section, errorText } from "./kit";
 import { Markdown } from "./markdown";
 
@@ -58,6 +58,7 @@ export function IssuePanel({ theme, layout, workspaceId }: PluginWorkspacePanelP
       <LinkedIssue
         theme={theme}
         directory={directory}
+        run={data.run}
         issue={data.issue}
         comments={data.comments}
         url={data.url}
@@ -129,6 +130,7 @@ function UnlinkButton({ theme, directory }: { theme: Theme; directory: string })
 function LinkedIssue({
   theme,
   directory,
+  run,
   issue,
   comments,
   url,
@@ -136,6 +138,7 @@ function LinkedIssue({
 }: {
   theme: Theme;
   directory: string;
+  run: IssueData["run"];
   issue: NonNullable<IssueData["issue"]>;
   comments: IssueData["comments"];
   url: string | null;
@@ -177,6 +180,8 @@ function LinkedIssue({
           <Text style={{ color: theme.colors.statusWarning }}>Blocked by {issue.blocked_by.join(", ")}</Text>
         ) : null}
       </View>
+
+      {run ? <RunStepBanner theme={theme} directory={directory} run={run} issue={issue.identifier} /> : null}
 
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
         {ISSUE_STATUSES.map((candidate) => (
@@ -233,5 +238,50 @@ function LinkedIssue({
         />
       </Section>
     </>
+  );
+}
+
+function RunStepBanner({
+  theme,
+  directory,
+  run,
+  issue,
+}: {
+  theme: Theme;
+  directory: string;
+  run: NonNullable<IssueData["run"]>;
+  issue: string;
+}) {
+  const control = useRpc(controlRun);
+  const invalidate = useInvalidateIssue(directory);
+  const toast = useToast();
+  const proceed = useMutation({
+    mutationFn: () => control({ projectRoot: run.projectRoot, plan: run.plan, action: "continue" }),
+    onSuccess: invalidate,
+    onError: (error) => toast.error(errorText(error)),
+  });
+  const awaitingReview = run.status === "paused" && run.reason === `review:${issue}`;
+  return (
+    <View
+      style={{
+        gap: 8,
+        padding: 10,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: awaitingReview ? theme.colors.statusWarning : theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+      }}
+    >
+      <Text style={{ color: theme.colors.foreground }}>
+        Step {run.index} of {run.total} in {run.plan}
+        {run.status && run.status !== "running" ? ` · run ${run.status}` : ""}
+      </Text>
+      {awaitingReview ? (
+        <>
+          <Message theme={theme}>The run is waiting for you to review this step before starting the next one.</Message>
+          <Button theme={theme} variant="primary" label="Continue the plan" busy={proceed.isPending} onPress={() => proceed.mutate()} />
+        </>
+      ) : null}
+    </View>
   );
 }

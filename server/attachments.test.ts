@@ -42,6 +42,7 @@ describe("attachment snapshots", () => {
   it("renders a plan as a nested checklist", () => {
     const item = planItem(base, {
       id: 19,
+      project_id: 1,
       identifier: "LIF-PLAN-4",
       title: "Ship v2",
       status: "active",
@@ -49,14 +50,16 @@ describe("attachment snapshots", () => {
       done_count: 1,
       steps: [
         {
+          id: 1,
+          issue_id: null,
           title: "Backend",
           description: "",
           done: false,
           children: [
-            { title: "Schema", description: "", done: true, issue_identifier: "LIF-9", issue_status: "done", children: [] },
+            { id: 2, issue_id: 9, title: "Schema", description: "", done: true, issue_identifier: "LIF-9", issue_status: "done", children: [] },
           ],
         },
-        { title: "App", description: "Wire it up", done: false, children: [] },
+        { id: 3, issue_id: null, title: "App", description: "Wire it up", done: false, children: [] },
       ],
     });
     expect(item.url).toBe("https://lific.test/LIF/plans/19");

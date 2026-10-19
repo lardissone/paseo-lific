@@ -41,6 +41,19 @@ describe("buildIssueInstructions", () => {
     expect(text).toContain("Never mention MIO-23");
   });
 
+  it("tells plan steps to commit and not open pull requests", () => {
+    const text = buildIssueInstructions({
+      issue,
+      comments: [],
+      url: "u",
+      privateTracker: false,
+      step: { plan: "MIO-PLAN-1", index: 2, total: 5 },
+    });
+    expect(text).toContain("step 2 of 5 in the Lific plan MIO-PLAN-1");
+    expect(text).toContain("commit your work here before you set the issue to done");
+    expect(text).toContain("Do not open a pull request unless you are asked to.");
+  });
+
   it("allows identifiers in commits when the tracker is not private", () => {
     const text = buildIssueInstructions({ issue, comments: [], url: "u", privateTracker: false });
     expect(text).not.toContain("Never mention");

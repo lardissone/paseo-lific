@@ -6,12 +6,12 @@ import {
   useRpc,
   useSettings,
 } from "@getpaseo/plugin/client";
-import { Icon } from "@getpaseo/plugin/client/react-native";
-import { useQuery } from "@tanstack/react-query";
+import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import type { IssueCard } from "../shared/lific";
-import { getBriefing, getHome, type Home } from "../shared/rpc";
+import { controlRun, getBriefing, getHome, type Home } from "../shared/rpc";
 import { lificSettings } from "../shared/settings";
 import { Button, Card, CONTROL_HEIGHT, Chip, Message, errorText, priorityColor, statusColor } from "./kit";
 import { Markdown } from "./markdown";
@@ -40,7 +40,14 @@ export function createHomeScreen(openScreen: OpenScreen) {
           <RefreshControl refreshing={home.isRefetching} onRefresh={() => void home.refetch()} tintColor={theme.colors.foregroundMuted} />
         }
       >
-        <Header theme={theme} home={home.data} loading={home.isFetching} onRefresh={() => void home.refetch()} onStart={() => startWork({})} />
+        <Header
+          theme={theme}
+          home={home.data}
+          loading={home.isFetching}
+          onRefresh={() => void home.refetch()}
+          onStart={() => startWork({})}
+          onRunPlan={() => openScreen({ screenId: "plan" })}
+        />
 
         {home.isLoading ? <Loading theme={theme} /> : null}
         {home.error ? (
@@ -55,6 +62,7 @@ export function createHomeScreen(openScreen: OpenScreen) {
         {home.data?.configured ? (
           <View style={{ flexDirection: wide ? "row" : "column", gap: 24, alignItems: "flex-start" }}>
             <View style={{ flex: wide ? 1 : undefined, alignSelf: "stretch", gap: 24 }}>
+              <Plans theme={theme} runs={home.data.runs} onChanged={() => void home.refetch()} />
               <InProgress theme={theme} entries={home.data.inProgress} navigation={navigation} />
               <NeedsYou theme={theme} issues={home.data.needsYou} />
               <Briefing theme={theme} projects={home.data.projects.map((p) => p.project.identifier)} />
@@ -75,12 +83,14 @@ function Header({
   loading,
   onRefresh,
   onStart,
+  onRunPlan,
 }: {
   theme: PluginTheme;
   home: Home | undefined;
   loading: boolean;
   onRefresh(): void;
   onStart(): void;
+  onRunPlan(): void;
 }) {
   const ready = home?.projects.reduce((sum, project) => sum + project.ready.length, 0) ?? 0;
   const summary = home?.configured
@@ -117,6 +127,7 @@ function Header({
           <Icon name="RefreshCw" size={16} color={theme.colors.foregroundMuted} />
         )}
       </Pressable>
+      {home?.configured ? <Button theme={theme} label="Run a plan" onPress={onRunPlan} alignSelf="center" /> : null}
       {home?.configured ? <Button theme={theme} variant="primary" label="Start work" onPress={onStart} alignSelf="center" /> : null}
     </View>
   );
@@ -187,6 +198,76 @@ function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entrie
           </View>
         </Card>
       ))}
+    </View>
+  );
+}
+
+function runStatusText(run: Home["runs"][number]): string {
+  if (run.status === "done") return "Complete";
+  if (run.status === "running") return run.current ? `Working on ${run.current.identifier || run.current.title}` : "Running";
+  const [why, issue] = (run.reason ?? "").split(":");
+  if (why === "review") return `Waiting for your review of ${issue}`;
+  if (why === "failed") return `Paused: an agent failed on ${issue}`;
+  if (why === "cancelled") return `Paused: ${issue} was cancelled`;
+  return "Paused";
+}
+
+function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: Home["runs"]; onChanged(): void }) {
+  const control = useRpc(controlRun);
+  const toast = useToast();
+  const act = useMutation({
+    mutationFn: (input: { projectRoot: string; plan: string; action: "continue" | "pause" | "stop" }) => control(input),
+    onSuccess: onChanged,
+    onError: (error) => toast.error(errorText(error)),
+  });
+  if (runs.length === 0) return null;
+  return (
+    <View style={{ gap: 10 }}>
+      <SectionHeader theme={theme} icon="ListChecks" title="Plans" count={runs.length} />
+      {runs.map((run) => {
+        const progress = run.stepCount === 0 ? 0 : run.doneCount / run.stepCount;
+        const waiting = run.status === "paused";
+        const target = { projectRoot: run.projectRoot, plan: run.plan };
+        return (
+          <Card key={`${run.projectRoot}:${run.plan}`} theme={theme}>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+              <Text style={{ color: theme.colors.foreground, fontWeight: "600", flex: 1 }} numberOfLines={1}>
+                {run.title}
+              </Text>
+              <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
+                {run.plan} · {run.doneCount}/{run.stepCount}
+              </Text>
+            </View>
+            <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.surface2, overflow: "hidden" }}>
+              <View
+                style={{
+                  width: `${Math.round(progress * 100)}%`,
+                  height: 4,
+                  backgroundColor: run.status === "done" ? theme.colors.statusSuccess : theme.colors.accent,
+                }}
+              />
+            </View>
+            <Text style={{ color: waiting ? theme.colors.statusWarning : theme.colors.foregroundMuted, fontSize: 12 }}>
+              {runStatusText(run)}
+              {run.mode === "review" && run.status === "running" ? " · pauses after each step" : ""}
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {waiting ? (
+                <Button theme={theme} variant="primary" label="Continue" busy={act.isPending} onPress={() => act.mutate({ ...target, action: "continue" })} />
+              ) : null}
+              {run.status === "running" ? (
+                <Button theme={theme} label="Pause" busy={act.isPending} onPress={() => act.mutate({ ...target, action: "pause" })} />
+              ) : null}
+              <Button
+                theme={theme}
+                label={run.status === "done" ? "Dismiss" : "Stop"}
+                busy={act.isPending}
+                onPress={() => act.mutate({ ...target, action: "stop" })}
+              />
+            </View>
+          </Card>
+        );
+      })}
     </View>
   );
 }

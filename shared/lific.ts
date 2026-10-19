@@ -51,6 +51,8 @@ export const PageSchema = z.object({
 export type Page = z.output<typeof PageSchema>;
 
 export interface PlanStep {
+  id: number;
+  issue_id: number | null;
   title: string;
   description: string;
   done: boolean;
@@ -61,6 +63,8 @@ export interface PlanStep {
 
 export const PlanStepSchema: z.ZodType<PlanStep> = z.lazy(() =>
   z.object({
+    id: z.number(),
+    issue_id: z.number().nullable(),
     title: z.string(),
     description: z.string(),
     done: z.boolean(),
@@ -72,12 +76,14 @@ export const PlanStepSchema: z.ZodType<PlanStep> = z.lazy(() =>
 
 export const PlanSchema = z.object({
   id: z.number(),
+  project_id: z.number(),
   identifier: z.string(),
   title: z.string(),
   status: z.string(),
   step_count: z.number(),
   done_count: z.number(),
-  steps: z.array(PlanStepSchema),
+  // Plan lists may omit the tree.
+  steps: z.array(PlanStepSchema).default([]),
 });
 export type Plan = z.output<typeof PlanSchema>;
 

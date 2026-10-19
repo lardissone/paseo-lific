@@ -176,6 +176,14 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       return call(PageSchema, "GET", `/pages/resolve/${encodeURIComponent(identifier)}`);
     },
 
+    listPlans(projectId: number): Promise<Plan[]> {
+      return call(z.array(PlanSchema), "GET", `/plans${query({ project_id: projectId, limit: 50 })}`);
+    },
+
+    async linkPlanStep(plan: Plan, stepId: number, issueId: number): Promise<void> {
+      await call(z.unknown(), "PUT", `/plans/${plan.id}/steps/${stepId}`, { issue_id: issueId });
+    },
+
     resolvePlan(identifier: string): Promise<Plan> {
       return call(PlanSchema, "GET", `/plans/resolve/${encodeURIComponent(identifier)}`);
     },
