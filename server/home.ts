@@ -1,7 +1,9 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import { errorMessage } from "../shared/errors";
 import { issueCard, type ProjectSummary } from "../shared/lific";
-import type { Home, ProjectResolution } from "../shared/rpc";
-import { readLinkedIssue } from "./git";
+import type { ConfiguredHome, Home } from "../shared/rpc";
+import type { Connections } from "./connection";
+import { readLinkedIssue, repositoryRoot } from "./git";
 import type { LificClient } from "./lific-client";
 import { planLeaves } from "./plan-steps";
 import { listRuns } from "./run-store";
@@ -10,19 +12,23 @@ type PaseoApi = PluginHandlerContext["paseo"];
 
 const READY_PER_PROJECT = 8;
 
-interface HomeDeps {
-  client: LificClient;
-  baseUrl: string;
-  paseo: PaseoApi;
-  resolveProject(projectRoot: string): Promise<ProjectResolution>;
-}
+const NO_ATTENTION = { assigned: [], human: [], waiting: [] };
 
-export async function loadHome({ client, baseUrl, paseo, resolveProject }: HomeDeps): Promise<Home> {
+export async function loadHome(connections: Connections, paseo: PaseoApi): Promise<Home> {
+  const connection = await connections.optional();
+  if (!connection) return { configured: false };
+  const { client } = connection;
+  const baseUrl = connection.settings.baseUrl;
+  const resolveProject = connections.resolveProject;
   const [lificProjects, { projects: paseoProjects }, { entries: workspaces }, attention] = await Promise.all([
-    client.listProjects(),
+    connections.listProjects(connection),
     paseo.projects.list(),
     paseo.workspaces.list(),
-    client.attention(),
+    // One missing section should not take the whole screen down.
+    client.attention().catch((error) => {
+      console.error("Lific attention unavailable:", errorMessage(error));
+      return NO_ATTENTION;
+    }),
   ]);
   const projectNames = new Map(lificProjects.map((project) => [project.id, project.name]));
 
@@ -90,8 +96,10 @@ export async function loadHome({ client, baseUrl, paseo, resolveProject }: HomeD
   };
 }
 
-async function loadRuns(client: LificClient, repo: string): Promise<Home["runs"]> {
-  const runs = (await listRuns(repo)).filter((run) => run.status !== "stopped");
+async function loadRuns(client: LificClient, projectRoot: string): Promise<ConfiguredHome["runs"]> {
+  const repo = await repositoryRoot(projectRoot);
+  if (!repo) return [];
+  const runs = await listRuns(repo);
   return Promise.all(
     runs.map(async (run) => {
       const plan = await client.resolvePlan(run.plan).catch(() => null);
@@ -102,11 +110,11 @@ async function loadRuns(client: LificClient, repo: string): Promise<Home["runs"]
         plan: run.plan,
         title: plan?.title ?? run.plan,
         status: run.status,
-        reason: run.reason ?? null,
+        pause: run.pause,
         mode: run.mode,
         doneCount: leaves.filter((leaf) => leaf.finished).length,
         stepCount: leaves.length,
-        current: current ? { identifier: current.issue ?? "", title: current.title } : null,
+        current: current ? { identifier: current.issue, title: current.title } : null,
       };
     }),
   );

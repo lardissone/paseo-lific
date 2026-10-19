@@ -1,3 +1,6 @@
+import { type IssueCard, issueCard } from "../shared/lific";
+import type { Connections } from "./connection";
+
 const MAX_MENTIONS = 10;
 
 interface TimelineItem {
@@ -36,4 +39,20 @@ export function mentionedIssues(timeline: readonly TimelineItem[], projectIdenti
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Cards for the Lific issues an agent mentioned in its last turn, or none. */
+export async function mentionedIssueCards(
+  connections: Connections,
+  timeline: readonly TimelineItem[],
+): Promise<IssueCard[]> {
+  const connection = await connections.optional();
+  if (!connection) return [];
+  const projects = await connections.listProjects(connection);
+  const identifiers = mentionedIssues(
+    timeline,
+    projects.map((project) => project.identifier),
+  );
+  const issues = await Promise.all(identifiers.map((identifier) => connection.client.getIssue(identifier).catch(() => null)));
+  return issues.flatMap((issue) => (issue ? [issueCard(connection.settings.baseUrl, issue)] : []));
 }

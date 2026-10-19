@@ -1,48 +1,47 @@
-import { type PluginScreenProps, useRpc, useSettings } from "@getpaseo/plugin/client";
+import { type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/react-native";
-import { SettingsCard, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
+import { SettingsCard, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { getPlanPreview, listBranches, listPlans, startRun } from "../shared/rpc";
-import { lificSettings } from "../shared/settings";
-import { Button, Chip, Message, Section, errorText } from "./kit";
-import { useGitProjects, useProviderOptions } from "./paseo-data";
+import { useState } from "react";
+import { Pressable, Text, View } from "react-native";
+import { errorMessage } from "../shared/errors";
+import { getPlanPreview, listPlans, startRun } from "../shared/rpc";
+import type { RunBranching, RunMode } from "../shared/run";
+import { AgentSelect, BaseBranchSelect, ProjectPicker } from "./form-fields";
+import { Button, Message, type OpenScreen, ScreenScaffold, Section, SelectableRow } from "./kit";
+import { useBaseBranch, useProjectRoot, useProvider } from "./paseo-data";
 
-type OpenScreen = (input: { screenId: string; params?: Record<string, string> }) => void;
-
-const MODES = [
+const MODES: readonly Option<RunMode>[] = [
   { value: "review", label: "Pause after each step", hint: "You review each step, then press Continue." },
   { value: "continuous", label: "Run straight through", hint: "The next step starts as soon as the previous issue is done." },
-] as const;
+];
 
-const BRANCHING = [
+const BRANCHING: readonly Option<RunBranching>[] = [
   { value: "stacked", label: "Stack the branches", hint: "Each step branches off the previous step's branch." },
   { value: "base", label: "Branch from the base", hint: "Every step branches off the base branch." },
-] as const;
+];
 
+interface Option<Value extends string> {
+  value: Value;
+  label: string;
+  hint: string;
+}
+
+/** Built by the client entry, which supplies `openScreen` to return to the home after starting. */
 export function createRunPlanScreen(openScreen: OpenScreen) {
   return function RunPlanScreen({ theme, layout, params }: PluginScreenProps) {
-    const settings = useSettings(lificSettings);
-    const projects = useGitProjects();
-    const providers = useProviderOptions();
     const toast = useToast();
-    const [projectRoot, setProjectRoot] = useState<string | null>(params.projectRoot ?? null);
+    const { projects, projectRoot, setProjectRoot } = useProjectRoot(params.projectRoot);
+    const { branches, baseBranch, setBaseBranch, remember } = useBaseBranch(projectRoot);
+    const agent = useProvider();
     const [plan, setPlan] = useState<string | null>(params.plan ?? null);
-    const [mode, setMode] = useState<"review" | "continuous">("review");
-    const [branching, setBranching] = useState<"stacked" | "base">("stacked");
-    const [base, setBase] = useState<string | null>(null);
-    const [provider, setProvider] = useState<string | null>(null);
+    const [mode, setMode] = useState<RunMode>("review");
+    const [branching, setBranching] = useState<RunBranching>("stacked");
     const [archivePrevious, setArchivePrevious] = useState(true);
 
     const fetchPlans = useRpc(listPlans);
     const fetchPreview = useRpc(getPlanPreview);
-    const fetchBranches = useRpc(listBranches);
     const start = useRpc(startRun);
-
-    useEffect(() => {
-      if (projectRoot === null && projects.data?.length === 1) setProjectRoot(projects.data[0]!.root);
-    }, [projectRoot, projects.data]);
 
     const plans = useQuery({
       queryKey: ["plans", projectRoot],
@@ -54,110 +53,67 @@ export function createRunPlanScreen(openScreen: OpenScreen) {
       queryFn: () => fetchPreview({ identifier: plan! }),
       enabled: plan !== null,
     });
-    const branches = useQuery({
-      queryKey: ["branches", projectRoot],
-      queryFn: () => fetchBranches({ projectRoot: projectRoot! }),
-      enabled: projectRoot !== null,
-    });
-
-    const values = settings.status === "ready" ? settings.values : null;
-    useEffect(() => {
-      if (!branches.data || !projectRoot) return;
-      const remembered = values?.lastBaseBranch[projectRoot];
-      setBase(remembered && branches.data.branches.includes(remembered) ? remembered : branches.data.defaultBranch);
-    }, [branches.data, projectRoot, values?.lastBaseBranch]);
-    useEffect(() => {
-      if (provider !== null || !providers.data?.length) return;
-      const match = providers.data.find((option) => option.value === values?.defaultProvider);
-      setProvider((match ?? providers.data.find((option) => option.isDefault) ?? providers.data[0]!).value);
-    }, [provider, providers.data, values?.defaultProvider]);
 
     const launch = useMutation({
-      mutationFn: () => start({
+      mutationFn: async () => {
+        await start({
           projectRoot: projectRoot!,
           plan: plan!,
           mode,
           branching,
-          base: base!,
-          provider: provider!,
+          base: baseBranch!,
+          provider: agent.provider!,
           archivePrevious: branching === "stacked" && archivePrevious,
-        }),
+        });
+        await remember();
+      },
       onSuccess: () => {
         toast.show(`Running ${plan}`, { variant: "success" });
         openScreen({ screenId: "home" });
       },
-      onError: (error) => toast.error(errorText(error)),
+      onError: (error) => toast.error(errorMessage(error)),
     });
 
     const remaining = preview.data?.steps.filter((step) => !step.done).length ?? 0;
-    const canStart = projectRoot !== null && plan !== null && base !== null && provider !== null && remaining > 0;
+    const canStart = projectRoot !== null && plan !== null && baseBranch !== null && agent.provider !== null && remaining > 0;
 
     return (
-      <ScrollView
-        style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
-        contentContainerStyle={{ padding: layout.compact ? 16 : 24, gap: 20, maxWidth: 760 }}
+      <ScreenScaffold
+        theme={theme}
+        compact={layout.compact}
+        title="Run a plan"
+        description="Paseo works through the plan's steps in order, one agent and worktree per step. Agents commit on their branch and close the step's issue; they do not open pull requests."
       >
-        <View style={{ gap: 2 }}>
-          <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700" }}>Run a plan</Text>
-          <Text style={{ color: theme.colors.foregroundMuted }}>
-            Paseo works through the plan's steps in order, one agent and worktree per step. Agents commit on their
-            branch and close the step's issue; they do not open pull requests.
-          </Text>
-        </View>
-
         <Section theme={theme} title="Project">
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-            {(projects.data ?? []).map((candidate) => (
-              <Chip
-                key={candidate.root}
-                theme={theme}
-                label={candidate.name}
-                selected={candidate.root === projectRoot}
-                onPress={() => {
-                  setProjectRoot(candidate.root);
-                  setPlan(null);
-                }}
-              />
-            ))}
-          </View>
+          <ProjectPicker
+            theme={theme}
+            projects={projects.data ?? []}
+            value={projectRoot}
+            onChange={(root) => {
+              setProjectRoot(root);
+              setPlan(null);
+            }}
+          />
         </Section>
 
         {projectRoot ? (
           <Section theme={theme} title="Plan">
             {plans.isLoading ? <Message theme={theme}>Loading plans…</Message> : null}
-            {plans.error ? <Message theme={theme} tone="danger">{errorText(plans.error)}</Message> : null}
+            {plans.error ? <Message theme={theme} tone="danger">{errorMessage(plans.error)}</Message> : null}
             {plans.data?.plans.length === 0 ? <Message theme={theme}>This project has no plans.</Message> : null}
             <View style={{ gap: 2 }}>
-              {(plans.data?.plans ?? []).map((candidate) => {
-                const selected = candidate.identifier === plan;
-                return (
-                  <Pressable
-                    key={candidate.identifier}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    onPress={() => setPlan(candidate.identifier)}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 10,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      borderRadius: 8,
-                      backgroundColor: selected ? theme.colors.surface2 : "transparent",
-                    }}
-                  >
-                    <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 0, minWidth: 92 }}>
-                      {candidate.identifier}
-                    </Text>
-                    <Text numberOfLines={1} style={{ color: theme.colors.foreground, flex: 1 }}>
-                      {candidate.title}
-                    </Text>
-                    <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-                      {candidate.doneCount}/{candidate.stepCount}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+              {(plans.data?.plans ?? []).map((candidate) => (
+                <SelectableRow
+                  key={candidate.identifier}
+                  theme={theme}
+                  selected={candidate.identifier === plan}
+                  onPress={() => setPlan(candidate.identifier)}
+                  identifier={candidate.identifier}
+                  identifierWidth={92}
+                  title={candidate.title}
+                  trailing={`${candidate.doneCount}/${candidate.stepCount}`}
+                />
+              ))}
             </View>
           </Section>
         ) : null}
@@ -173,9 +129,7 @@ export function createRunPlanScreen(openScreen: OpenScreen) {
                   <Text style={{ color: step.done ? theme.colors.foregroundMuted : theme.colors.foreground, flex: 1 }}>
                     {step.title}
                   </Text>
-                  {step.issue ? (
-                    <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{step.issue}</Text>
-                  ) : null}
+                  {step.issue ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{step.issue}</Text> : null}
                 </View>
               ))}
             </View>
@@ -186,14 +140,14 @@ export function createRunPlanScreen(openScreen: OpenScreen) {
 
         {plan ? (
           <Section theme={theme} title="How to run it">
-            <OptionGroup<"review" | "continuous"> theme={theme} options={MODES} value={mode} onChange={setMode} />
-            <OptionGroup<"stacked" | "base"> theme={theme} options={BRANCHING} value={branching} onChange={setBranching} />
+            <OptionGroup<RunMode> theme={theme} options={MODES} value={mode} onChange={setMode} />
+            <OptionGroup<RunBranching> theme={theme} options={BRANCHING} value={branching} onChange={setBranching} />
             <SettingsCard>
-              <SettingsSelect
+              <BaseBranchSelect
                 label={branching === "stacked" ? "First step branches from" : "Base branch"}
-                value={base ?? ""}
-                options={(branches.data?.branches ?? []).map((name) => ({ label: name, value: name }))}
-                onValueChange={setBase}
+                branches={branches}
+                value={baseBranch}
+                onChange={setBaseBranch}
               />
               {branching === "stacked" ? (
                 <SettingsSwitch
@@ -203,12 +157,7 @@ export function createRunPlanScreen(openScreen: OpenScreen) {
                   onValueChange={setArchivePrevious}
                 />
               ) : null}
-              <SettingsSelect
-                label="Agent"
-                value={provider ?? ""}
-                options={(providers.data ?? []).map(({ label, value }) => ({ label, value }))}
-                onValueChange={setProvider}
-              />
+              <AgentSelect options={agent.options} value={agent.provider} onChange={agent.setProvider} />
             </SettingsCard>
             <Button
               theme={theme}
@@ -220,7 +169,7 @@ export function createRunPlanScreen(openScreen: OpenScreen) {
             />
           </Section>
         ) : null}
-      </ScrollView>
+      </ScreenScaffold>
     );
   };
 }
@@ -232,7 +181,7 @@ function OptionGroup<Value extends string>({
   onChange,
 }: {
   theme: PluginScreenProps["theme"];
-  options: readonly { value: Value; label: string; hint: string }[];
+  options: readonly Option<Value>[];
   value: Value;
   onChange(value: Value): void;
 }) {

@@ -1,4 +1,6 @@
 import type { PluginHandlerContext, PluginTurnOutcome } from "@getpaseo/plugin/server";
+import { z } from "zod";
+import { errorMessage } from "../shared/errors";
 import {
   type BranchLocation,
   locateBranch,
@@ -11,7 +13,15 @@ import { questionText } from "./question-text";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
-type Connect = () => Promise<{ client: LificClient } | null>;
+const SavedAssigneesSchema = z.array(z.string());
+
+interface LifecycleDeps {
+  connect(): Promise<{ client: LificClient } | null>;
+  /** An agent turn failed on a linked branch. */
+  onStepFailed(location: BranchLocation, issue: string): Promise<void>;
+  /** A linked workspace was archived while its issue was still active. */
+  onStepAbandoned(location: BranchLocation, issue: string): Promise<void>;
+}
 
 interface LinkedIssue {
   location: BranchLocation;
@@ -24,12 +34,12 @@ interface LinkedIssue {
  * changes a person needs to see: a question waiting on them, a failing agent, and a workspace
  * archived while the issue was still active.
  */
-export function createLifecycleReporter(connect: Connect) {
+export function createLifecycleReporter({ connect, onStepFailed, onStepAbandoned }: LifecycleDeps) {
   // Hooks fire concurrently; one queue keeps read-modify-write of the branch state consistent.
   let queue: Promise<void> = Promise.resolve();
   function serialize(label: string, task: () => Promise<void>): Promise<void> {
     const next = queue.then(task).catch((error) => {
-      console.error(`Lific ${label} failed:`, error instanceof Error ? error.message : error);
+      console.error(`Lific ${label} failed:`, errorMessage(error));
     });
     queue = next;
     return next;
@@ -50,12 +60,11 @@ export function createLifecycleReporter(connect: Connect) {
 
   async function restoreAssignees({ location, identifier, client }: LinkedIssue): Promise<void> {
     const saved = await readBranchConfig(location, "lificAssigneesBeforeQuestion");
+    // Parse before clearing, so a corrupt value fails loudly instead of losing the record.
+    const assignees = SavedAssigneesSchema.parse(saved ? JSON.parse(saved) : []);
+    await client.updateIssueByIdentifier(identifier, { assignees });
     await unsetBranchConfig(location, "lificPendingQuestions");
     await unsetBranchConfig(location, "lificAssigneesBeforeQuestion");
-    const assignees: unknown = saved ? JSON.parse(saved) : [];
-    await client.updateIssueByIdentifier(identifier, {
-      assignees: Array.isArray(assignees) ? assignees.map(String) : [],
-    });
   }
 
   return {
@@ -103,6 +112,7 @@ export function createLifecycleReporter(connect: Connect) {
           if (failing) await unsetBranchConfig(linked.location, "lificFailing");
           return;
         }
+        await onStepFailed(linked.location, linked.identifier);
         if (failing) return;
         await writeBranchConfig(linked.location, "lificFailing", "true");
         const issue = await linked.client.getIssue(linked.identifier);
@@ -124,6 +134,7 @@ export function createLifecycleReporter(connect: Connect) {
           moved,
           "The Paseo workspace for this issue was archived before the issue was closed. Moved back to todo.",
         );
+        await onStepAbandoned(linked.location, linked.identifier);
       });
     },
   };

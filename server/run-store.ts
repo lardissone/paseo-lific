@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { RunBranchingSchema, RunModeSchema } from "../shared/rpc";
+import {
+  formatRunPause,
+  parseRunPause,
+  type RunBranching,
+  RunBranchingSchema,
+  type RunMode,
+  RunModeSchema,
+  type RunPause,
+  type RunStatus,
+  RunStatusSchema,
+} from "../shared/run";
 import { git, gitOptional } from "./git";
 
 // Plan runs live in the repository's local git config, like issue links: shared by every
@@ -7,26 +17,46 @@ import { git, gitOptional } from "./git";
 //   lific-run.<PLAN-ID>.status | reason | mode | branching | base | provider | approved | archive
 // git lowercases variable names, so keys are single lowercase words.
 
-export const RunStatusSchema = z.enum(["running", "paused", "done", "stopped"]);
+export interface RunRecord {
+  plan: string;
+  status: RunStatus;
+  /** Set exactly when `status` is `paused`. */
+  pause: RunPause | null;
+  mode: RunMode;
+  branching: RunBranching;
+  base: string;
+  provider: string;
+  /** Last step issue the person approved in review mode. */
+  approved: string | null;
+  /** Archive a step's workspace once the next stacked step starts from its branch. */
+  archive: boolean;
+}
 
-export const RunRecordSchema = z.object({
-  plan: z.string(),
+const StoredRunSchema = z.object({
   status: RunStatusSchema,
-  /** Why the run is paused: `review:<ISSUE>`, `failed:<ISSUE>`, `cancelled:<ISSUE>`, or `manual`. */
   reason: z.string().optional(),
   mode: RunModeSchema,
   branching: RunBranchingSchema,
   base: z.string(),
   provider: z.string(),
-  /** Last step issue the person approved in review mode. */
   approved: z.string().optional(),
-  /** `yes` archives a step's workspace once the next stacked step starts from its branch. */
-  archive: z.enum(["yes", "no"]).default("no"),
+  archive: z.enum(["true", "false"]).default("false"),
 });
-export type RunRecord = z.output<typeof RunRecordSchema>;
 
 const SECTION = "lific-run";
-const FIELDS = ["status", "reason", "mode", "branching", "base", "provider", "approved", "archive"] as const;
+
+function toStored(run: RunRecord): Record<keyof z.output<typeof StoredRunSchema>, string | undefined> {
+  return {
+    status: run.status,
+    reason: run.pause ? formatRunPause(run.pause) : undefined,
+    mode: run.mode,
+    branching: run.branching,
+    base: run.base,
+    provider: run.provider,
+    approved: run.approved ?? undefined,
+    archive: String(run.archive),
+  };
+}
 
 export async function listRuns(repo: string): Promise<RunRecord[]> {
   const output = await gitOptional(repo, ["config", "--local", "--get-regexp", `^${SECTION}\\.`]);
@@ -38,12 +68,26 @@ export async function listRuns(repo: string): Promise<RunRecord[]> {
     const value = space === -1 ? "" : line.slice(space + 1);
     const lastDot = name.lastIndexOf(".");
     const plan = name.slice(SECTION.length + 1, lastDot);
-    const field = name.slice(lastDot + 1);
-    raw.set(plan, { ...raw.get(plan), [field]: value });
+    raw.set(plan, { ...raw.get(plan), [name.slice(lastDot + 1)]: value });
   }
   return [...raw].flatMap(([plan, fields]) => {
-    const parsed = RunRecordSchema.safeParse({ plan, ...fields });
-    return parsed.success ? [parsed.data] : [];
+    const parsed = StoredRunSchema.safeParse(fields);
+    if (!parsed.success) return [];
+    const stored = parsed.data;
+    const pause = stored.status === "paused" ? (parseRunPause(stored.reason ?? "") ?? { kind: "manual" as const }) : null;
+    return [
+      {
+        plan,
+        status: stored.status,
+        pause,
+        mode: stored.mode,
+        branching: stored.branching,
+        base: stored.base,
+        provider: stored.provider,
+        approved: stored.approved ?? null,
+        archive: stored.archive === "true",
+      },
+    ];
   });
 }
 
@@ -52,9 +96,8 @@ export async function readRun(repo: string, plan: string): Promise<RunRecord | n
 }
 
 export async function writeRun(repo: string, run: RunRecord): Promise<void> {
-  for (const field of FIELDS) {
+  for (const [field, value] of Object.entries(toStored(run))) {
     const key = `${SECTION}.${run.plan}.${field}`;
-    const value = run[field];
     if (value === undefined) await gitOptional(repo, ["config", "--local", "--unset", key]);
     else await git(repo, ["config", "--local", key, value]);
   }
@@ -76,7 +119,7 @@ export async function linkedBranches(repo: string): Promise<Map<string, string>>
   return branches;
 }
 
-/** Worktree path checked out on `branch`, if any. */
+/** Worktree path checked out on `branch`, as git reports it (a real path), if any. */
 export async function worktreeForBranch(repo: string, branch: string): Promise<string | null> {
   const output = await gitOptional(repo, ["worktree", "list", "--porcelain"]);
   if (!output) return null;

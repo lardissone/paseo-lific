@@ -1,21 +1,23 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { openExternalUrl } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
-import { Text, View } from "react-native";
-import { type Inline, parseMarkdown } from "../shared/markdown";
+import { Platform, Text, View } from "react-native";
+import { type Block, type Inline, parseMarkdown } from "./markdown-parser";
 
 const HEADING_SIZES = [18, 16, 15, 14, 14, 14];
+// iOS has no font named "monospace".
+const MONOSPACE = Platform.select({ ios: "Menlo", default: "monospace" });
 
 interface MarkdownProps {
   theme: PluginTheme;
-  source: string;
+  /** Parsed with `parseMarkdown`; callers that also count blocks parse once and pass the result. */
+  blocks: readonly Block[];
   /** Render only the first N blocks; the caller owns the "show more" control. */
   maxBlocks?: number;
   color?: string;
 }
 
-export function Markdown({ theme, source, maxBlocks, color = theme.colors.foreground }: MarkdownProps) {
-  const blocks = useMemo(() => parseMarkdown(source), [source]);
+export function Markdown({ theme, blocks, maxBlocks, color = theme.colors.foreground }: MarkdownProps) {
   const visible = maxBlocks === undefined ? blocks : blocks.slice(0, maxBlocks);
   return (
     <View style={{ gap: 6 }}>
@@ -53,7 +55,7 @@ export function Markdown({ theme, source, maxBlocks, color = theme.colors.foregr
                 selectable
                 style={{
                   color,
-                  fontFamily: "monospace",
+                  fontFamily: MONOSPACE,
                   fontSize: 12,
                   padding: 8,
                   borderRadius: 6,
@@ -71,8 +73,10 @@ export function Markdown({ theme, source, maxBlocks, color = theme.colors.foregr
   );
 }
 
-export function countMarkdownBlocks(source: string): number {
-  return parseMarkdown(source).length;
+/** Markdown from a source string, for callers that do not need the block count. */
+export function MarkdownText({ source, ...props }: Omit<MarkdownProps, "blocks"> & { source: string }) {
+  const blocks = useMemo(() => parseMarkdown(source), [source]);
+  return <Markdown {...props} blocks={blocks} />;
 }
 
 function Inlines({ theme, inlines }: { theme: PluginTheme; inlines: Inline[] }) {
@@ -94,7 +98,7 @@ function Inlines({ theme, inlines }: { theme: PluginTheme; inlines: Inline[] }) 
         );
       case "code":
         return (
-          <Text key={index} style={{ fontFamily: "monospace", backgroundColor: theme.colors.surface2 }}>
+          <Text key={index} style={{ fontFamily: MONOSPACE, backgroundColor: theme.colors.surface2 }}>
             {inline.text}
           </Text>
         );

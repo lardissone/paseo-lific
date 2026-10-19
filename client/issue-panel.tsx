@@ -1,50 +1,57 @@
-import type { RpcOutput } from "@getpaseo/plugin";
 import { openExternalUrl, type PluginWorkspacePanelProps, useRpc, useWorkspace } from "@getpaseo/plugin/client";
-import { TextInput, useToast } from "@getpaseo/plugin/client/react-native";
+import { useToast } from "@getpaseo/plugin/client/react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
+import { errorMessage } from "../shared/errors";
 import { ISSUE_STATUSES, type IssueStatus } from "../shared/lific";
-import { addIssueComment, controlRun, getWorkspaceIssue, linkWorkspaceIssue, setIssueStatus } from "../shared/rpc";
-import { Button, Chip, Message, Section, errorText } from "./kit";
-import { Markdown } from "./markdown";
+import {
+  addIssueComment,
+  controlRun,
+  getWorkspaceIssue,
+  linkWorkspaceIssue,
+  setIssueStatus,
+  type WorkspaceIssue,
+} from "../shared/rpc";
+import { describeRunPause } from "../shared/run";
+import { Button, Chip, Message, Section, TextField } from "./kit";
+import { MarkdownText } from "./markdown";
 
 const REFRESH_MS = 30_000;
+
+type Theme = PluginWorkspacePanelProps["theme"];
+type Linked = Extract<WorkspaceIssue, { state: "linked" }>;
+type RunStep = NonNullable<Linked["run"]>;
 
 export function IssuePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const directory = useWorkspace(workspaceId, (workspace) => workspace.directory);
   const fetchIssue = useRpc(getWorkspaceIssue);
-  const queryKey = ["workspace-issue", directory];
   const issue = useQuery({
-    queryKey,
+    queryKey: ["workspace-issue", directory],
     queryFn: () => fetchIssue({ directory: directory! }),
     enabled: directory !== null,
     refetchInterval: REFRESH_MS,
   });
 
-  const inputStyle = {
-    color: theme.colors.foreground,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: theme.colors.surface1,
-  };
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
+      contentContainerStyle={{ padding: layout.compact ? 16 : 20, gap: 16 }}
+    >
+      {directory === null || issue.isLoading ? <Message theme={theme}>Loading…</Message> : null}
+      {issue.error ? <Message theme={theme} tone="danger">{errorMessage(issue.error)}</Message> : null}
+      {directory !== null && issue.data ? <PanelBody theme={theme} directory={directory} data={issue.data} /> : null}
+    </ScrollView>
+  );
+}
 
-  const body = (() => {
-    if (directory === null || issue.isLoading) return <Message theme={theme}>Loading…</Message>;
-    if (issue.error) return <Message theme={theme} tone="danger">{errorText(issue.error)}</Message>;
-    const data = issue.data!;
-    if (!data.configured) {
-      return (
-        <Message theme={theme}>
-          Lific is not configured. Open Settings → Plugins → Lific to add the URL and API key.
-        </Message>
-      );
-    }
-    if (!data.identifier) return <LinkForm theme={theme} directory={directory} inputStyle={inputStyle} />;
-    if (!data.issue) {
+function PanelBody({ theme, directory, data }: { theme: Theme; directory: string; data: WorkspaceIssue }) {
+  switch (data.state) {
+    case "unconfigured":
+      return <Message theme={theme}>Lific is not configured. Open Settings → Plugins → Lific to add the URL and API key.</Message>;
+    case "unlinked":
+      return <LinkForm theme={theme} directory={directory} />;
+    case "unavailable":
       return (
         <View style={{ gap: 12 }}>
           <Message theme={theme} tone="danger">
@@ -53,39 +60,17 @@ export function IssuePanel({ theme, layout, workspaceId }: PluginWorkspacePanelP
           <UnlinkButton theme={theme} directory={directory} />
         </View>
       );
-    }
-    return (
-      <LinkedIssue
-        theme={theme}
-        directory={directory}
-        run={data.run}
-        issue={data.issue}
-        comments={data.comments}
-        url={data.url}
-        inputStyle={inputStyle}
-      />
-    );
-  })();
-
-  return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
-      contentContainerStyle={{ padding: layout.compact ? 16 : 20, gap: 16 }}
-    >
-      {body}
-    </ScrollView>
-  );
+    case "linked":
+      return <LinkedIssue theme={theme} directory={directory} data={data} />;
+  }
 }
-
-type Theme = PluginWorkspacePanelProps["theme"];
-type IssueData = RpcOutput<typeof getWorkspaceIssue>;
 
 function useInvalidateIssue(directory: string) {
   const queryClient = useQueryClient();
   return () => queryClient.invalidateQueries({ queryKey: ["workspace-issue", directory] });
 }
 
-function LinkForm({ theme, directory, inputStyle }: { theme: Theme; directory: string; inputStyle: object }) {
+function LinkForm({ theme, directory }: { theme: Theme; directory: string }) {
   const [identifier, setIdentifier] = useState("");
   const link = useRpc(linkWorkspaceIssue);
   const invalidate = useInvalidateIssue(directory);
@@ -96,17 +81,10 @@ function LinkForm({ theme, directory, inputStyle }: { theme: Theme; directory: s
   return (
     <Section theme={theme} title="Lific issue">
       <Message theme={theme}>
-        This workspace is not linked to an issue. Link one to give its agents the issue as context. The link is
-        stored in the repository's local git config and is never pushed.
+        This workspace is not linked to an issue. Link one to give its agents the issue as context. The link is stored
+        in the repository's local git config and is never pushed.
       </Message>
-      <TextInput
-        value={identifier}
-        onChangeText={setIdentifier}
-        placeholder="MIO-23"
-        placeholderTextColor={theme.colors.foregroundMuted}
-        autoCapitalize="characters"
-        style={inputStyle}
-      />
+      <TextField theme={theme} value={identifier} onChangeText={setIdentifier} placeholder="MIO-23" autoCapitalize="characters" />
       <Button
         theme={theme}
         variant="primary"
@@ -115,7 +93,7 @@ function LinkForm({ theme, directory, inputStyle }: { theme: Theme; directory: s
         busy={mutation.isPending}
         onPress={() => mutation.mutate()}
       />
-      {mutation.error ? <Message theme={theme} tone="danger">{errorText(mutation.error)}</Message> : null}
+      {mutation.error ? <Message theme={theme} tone="danger">{errorMessage(mutation.error)}</Message> : null}
     </Section>
   );
 }
@@ -127,23 +105,8 @@ function UnlinkButton({ theme, directory }: { theme: Theme; directory: string })
   return <Button theme={theme} label="Unlink" busy={mutation.isPending} onPress={() => mutation.mutate()} />;
 }
 
-function LinkedIssue({
-  theme,
-  directory,
-  run,
-  issue,
-  comments,
-  url,
-  inputStyle,
-}: {
-  theme: Theme;
-  directory: string;
-  run: IssueData["run"];
-  issue: NonNullable<IssueData["issue"]>;
-  comments: IssueData["comments"];
-  url: string | null;
-  inputStyle: object;
-}) {
+function LinkedIssue({ theme, directory, data }: { theme: Theme; directory: string; data: Linked }) {
+  const { issue, comments, url, run } = data;
   const toast = useToast();
   const invalidate = useInvalidateIssue(directory);
   const updateStatus = useRpc(setIssueStatus);
@@ -153,7 +116,7 @@ function LinkedIssue({
   const status = useMutation({
     mutationFn: (next: IssueStatus) => updateStatus({ identifier: issue.identifier, status: next }),
     onSuccess: invalidate,
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => toast.error(errorMessage(error)),
   });
   const send = useMutation({
     mutationFn: () => comment({ identifier: issue.identifier, content: draft }),
@@ -161,10 +124,9 @@ function LinkedIssue({
       setDraft("");
       void invalidate();
     },
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => toast.error(errorMessage(error)),
   });
 
-  const text = { color: theme.colors.foreground };
   const muted = { color: theme.colors.foregroundMuted, fontSize: 12 };
 
   return (
@@ -174,14 +136,14 @@ function LinkedIssue({
           {issue.identifier} · {issue.priority} priority
           {issue.labels.length > 0 ? ` · ${issue.labels.join(", ")}` : ""}
         </Text>
-        <Text style={{ ...text, fontSize: 18, fontWeight: "600" }}>{issue.title}</Text>
+        <Text style={{ color: theme.colors.foreground, fontSize: 18, fontWeight: "600" }}>{issue.title}</Text>
         {issue.needs_human ? <Text style={{ color: theme.colors.statusWarning }}>Waiting on a person</Text> : null}
         {issue.blocked_by?.length ? (
           <Text style={{ color: theme.colors.statusWarning }}>Blocked by {issue.blocked_by.join(", ")}</Text>
         ) : null}
       </View>
 
-      {run ? <RunStepBanner theme={theme} directory={directory} run={run} issue={issue.identifier} /> : null}
+      {run ? <RunStepBanner theme={theme} directory={directory} run={run} /> : null}
 
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
         {ISSUE_STATUSES.map((candidate) => (
@@ -196,71 +158,41 @@ function LinkedIssue({
       </View>
 
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {url ? <Button theme={theme} label="Open in Lific" onPress={() => void openExternalUrl(url)} /> : null}
+        <Button theme={theme} label="Open in Lific" onPress={() => void openExternalUrl(url)} />
         <UnlinkButton theme={theme} directory={directory} />
       </View>
 
       <Section theme={theme} title="Description">
-        {issue.description.trim() ? (
-          <Markdown theme={theme} source={issue.description} />
-        ) : (
-          <Message theme={theme}>No description.</Message>
-        )}
+        {issue.description.trim() ? <MarkdownText theme={theme} source={issue.description} /> : <Message theme={theme}>No description.</Message>}
       </Section>
 
       <Section theme={theme} title="Recent comments">
         {comments.length === 0 ? <Message theme={theme}>No comments yet.</Message> : null}
         {comments.map((entry) => (
-          <View
-            key={entry.id}
-            style={{ gap: 4, padding: 10, borderRadius: 8, backgroundColor: theme.colors.surface1 }}
-          >
+          <View key={entry.id} style={{ gap: 4, padding: 10, borderRadius: 8, backgroundColor: theme.colors.surface1 }}>
             <Text style={muted}>
               {entry.author_display_name || entry.author} · {new Date(entry.created_at).toLocaleString()}
             </Text>
-            <Markdown theme={theme} source={entry.content} />
+            <MarkdownText theme={theme} source={entry.content} />
           </View>
         ))}
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Add a comment"
-          placeholderTextColor={theme.colors.foregroundMuted}
-          multiline
-          style={{ ...inputStyle, minHeight: 64, textAlignVertical: "top" }}
-        />
-        <Button
-          theme={theme}
-          label="Comment"
-          disabled={draft.trim() === ""}
-          busy={send.isPending}
-          onPress={() => send.mutate()}
-        />
+        <TextField theme={theme} value={draft} onChangeText={setDraft} placeholder="Add a comment" multiline />
+        <Button theme={theme} label="Comment" disabled={draft.trim() === ""} busy={send.isPending} onPress={() => send.mutate()} />
       </Section>
     </>
   );
 }
 
-function RunStepBanner({
-  theme,
-  directory,
-  run,
-  issue,
-}: {
-  theme: Theme;
-  directory: string;
-  run: NonNullable<IssueData["run"]>;
-  issue: string;
-}) {
+function RunStepBanner({ theme, directory, run }: { theme: Theme; directory: string; run: RunStep }) {
   const control = useRpc(controlRun);
   const invalidate = useInvalidateIssue(directory);
   const toast = useToast();
   const proceed = useMutation({
     mutationFn: () => control({ projectRoot: run.projectRoot, plan: run.plan, action: "continue" }),
     onSuccess: invalidate,
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => toast.error(errorMessage(error)),
   });
-  const awaitingReview = run.status === "paused" && run.reason === `review:${issue}`;
+  const paused = run.status === "paused" && run.pause !== null;
   return (
     <View
       style={{
@@ -268,17 +200,17 @@ function RunStepBanner({
         padding: 10,
         borderRadius: 8,
         borderWidth: 1,
-        borderColor: awaitingReview ? theme.colors.statusWarning : theme.colors.border,
+        borderColor: paused ? theme.colors.statusWarning : theme.colors.border,
         backgroundColor: theme.colors.surface1,
       }}
     >
       <Text style={{ color: theme.colors.foreground }}>
         Step {run.index} of {run.total} in {run.plan}
-        {run.status && run.status !== "running" ? ` · run ${run.status}` : ""}
+        {run.status === "done" ? " · plan complete" : ""}
       </Text>
-      {awaitingReview ? (
+      {paused ? (
         <>
-          <Message theme={theme}>The run is waiting for you to review this step before starting the next one.</Message>
+          <Message theme={theme}>{describeRunPause(run.pause!)}</Message>
           <Button theme={theme} variant="primary" label="Continue the plan" busy={proceed.isPending} onPress={() => proceed.mutate()} />
         </>
       ) : null}

@@ -3,17 +3,19 @@ import {
   type Comment,
   type Issue,
   issueWebUrl,
+  parseIssueIdentifier,
   type Page,
   type Plan,
-  type PlanStep,
   resourceWebUrl,
 } from "../shared/lific";
 import type { LificClient } from "./lific-client";
+import { flattenSteps } from "./plan-steps";
 
-const ISSUE_ID = /^[A-Z][A-Z0-9]*-\d+$/i;
 const PAGE_ID = /^(?:[A-Z][A-Z0-9]*-)?DOC-\d+$/i;
 const PLAN_ID = /^[A-Z][A-Z0-9]*-PLAN-\d+$/i;
 const SEARCH_LIMIT = 8;
+/** An attached issue carries more history than agent instructions, which stay short. */
+const ATTACHED_COMMENTS = 5;
 
 export async function searchAttachments(
   client: LificClient,
@@ -31,21 +33,23 @@ export async function searchAttachments(
     const page = await client.resolvePage(query.toUpperCase()).catch(() => null);
     return page ? [pageItem(baseUrl, page)] : [];
   }
-  if (ISSUE_ID.test(query)) {
-    const issue = await client.getIssue(query.toUpperCase()).catch(() => null);
-    if (issue) return [issueItem(baseUrl, issue, await client.listRecentComments(issue, 5))];
+  const identifier = parseIssueIdentifier(query);
+  if (identifier) {
+    const issue = await client.getIssue(identifier).catch(() => null);
+    if (issue) return [issueItem(baseUrl, issue, await client.listRecentComments(issue, ATTACHED_COMMENTS))];
   }
 
   const results = await client.search({ query, limit: SEARCH_LIMIT });
+  // A result the key cannot read, or one deleted since indexing, drops out instead of failing the list.
   const items = await Promise.all(
     results.map(async (result) => {
       if (result.result_type === "issue" && result.identifier) {
         const issue = await client.getIssue(result.identifier);
-        return issueItem(baseUrl, issue, await client.listRecentComments(issue, 5));
+        return issueItem(baseUrl, issue, await client.listRecentComments(issue, ATTACHED_COMMENTS));
       }
       if (result.result_type === "page") return pageItem(baseUrl, await client.getPage(result.id));
       return null;
-    }),
+    }).map((item) => item.catch(() => null)),
   );
   return items.filter((item) => item !== null);
 }
@@ -100,7 +104,11 @@ export function planItem(baseUrl: string, plan: Plan): PluginAttachmentItem {
     `Status: ${plan.status} · ${plan.done_count}/${plan.step_count} steps done`,
     "",
   ];
-  appendSteps(lines, plan.steps, 0);
+  for (const { step, depth } of flattenSteps(plan.steps)) {
+    const issue = step.issue_identifier ? ` (${step.issue_identifier}${step.issue_status ? `, ${step.issue_status}` : ""})` : "";
+    lines.push(`${"  ".repeat(depth)}- [${step.done ? "x" : " "}] ${step.title}${issue}`);
+    if (step.description.trim()) lines.push(`${"  ".repeat(depth + 1)}${step.description.trim().replace(/\n/g, " ")}`);
+  }
   return {
     id: `plan:${plan.identifier}`,
     identifier: plan.identifier,
@@ -110,13 +118,4 @@ export function planItem(baseUrl: string, plan: Plan): PluginAttachmentItem {
     text: lines.join("\n"),
     resourceType: "plan",
   };
-}
-
-function appendSteps(lines: string[], steps: PlanStep[], depth: number): void {
-  for (const step of steps) {
-    const issue = step.issue_identifier ? ` (${step.issue_identifier}${step.issue_status ? `, ${step.issue_status}` : ""})` : "";
-    lines.push(`${"  ".repeat(depth)}- [${step.done ? "x" : " "}] ${step.title}${issue}`);
-    if (step.description.trim()) lines.push(`${"  ".repeat(depth + 1)}${step.description.trim().replace(/\n/g, " ")}`);
-    appendSteps(lines, step.children, depth + 1);
-  }
 }

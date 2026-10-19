@@ -18,7 +18,9 @@ const run: RunRecord = {
   branching: "stacked",
   base: "main",
   provider: "claude/opus",
-  archive: "no",
+  pause: null,
+  approved: null,
+  archive: false,
 };
 
 describe("planLeaves", () => {
@@ -40,12 +42,23 @@ describe("nextRunAction", () => {
   const branchOf = (issue: string) => branches.get(issue) ?? null;
 
   it("starts the first step from the run base", () => {
-    expect(nextRunAction([leaf("MIO-9")], run, branchOf)).toMatchObject({ kind: "start", index: 0, baseBranch: "main" });
+    expect(nextRunAction([leaf("MIO-9")], run, branchOf)).toEqual({
+      kind: "start",
+      issue: "MIO-9",
+      index: 0,
+      baseBranch: "main",
+      previous: null,
+    });
   });
 
   it("stacks the next step on the previous step's branch", () => {
     const leaves = [leaf("MIO-1", { finished: true }), leaf("MIO-2")];
-    expect(nextRunAction(leaves, run, branchOf)).toMatchObject({ kind: "start", index: 1, baseBranch: "first-step" });
+    expect(nextRunAction(leaves, run, branchOf)).toMatchObject({
+      kind: "start",
+      index: 1,
+      baseBranch: "first-step",
+      previous: { issue: "MIO-1", branch: "first-step" },
+    });
     expect(nextRunAction(leaves, { ...run, branching: "base" }, branchOf)).toMatchObject({ baseBranch: "main" });
   });
 
@@ -56,7 +69,7 @@ describe("nextRunAction", () => {
   it("pauses for review until the previous step is approved", () => {
     const leaves = [leaf("MIO-1", { finished: true }), leaf("MIO-2")];
     const review = { ...run, mode: "review" as const };
-    expect(nextRunAction(leaves, review, branchOf)).toEqual({ kind: "pause", reason: "review:MIO-1" });
+    expect(nextRunAction(leaves, review, branchOf)).toEqual({ kind: "pause", pause: { kind: "review", issue: "MIO-1" } });
     expect(nextRunAction(leaves, { ...review, approved: "MIO-1" }, branchOf)).toMatchObject({ kind: "start" });
   });
 
@@ -64,7 +77,7 @@ describe("nextRunAction", () => {
     expect(nextRunAction([leaf(null)], run, branchOf)).toMatchObject({ kind: "create-issue" });
     expect(nextRunAction([leaf("MIO-3", { cancelled: true })], run, branchOf)).toEqual({
       kind: "pause",
-      reason: "cancelled:MIO-3",
+      pause: { kind: "cancelled", issue: "MIO-3" },
     });
     expect(nextRunAction([leaf("MIO-1", { finished: true })], run, branchOf)).toEqual({ kind: "done" });
   });

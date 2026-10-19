@@ -5,6 +5,9 @@ export type IssueStatus = z.output<typeof IssueStatusSchema>;
 
 export const ISSUE_STATUSES = IssueStatusSchema.options;
 
+export const PrioritySchema = z.enum(["urgent", "high", "medium", "low", "none"]);
+export type Priority = z.output<typeof PrioritySchema>;
+
 export const IssueSchema = z.object({
   id: z.number(),
   project_id: z.number(),
@@ -12,7 +15,7 @@ export const IssueSchema = z.object({
   title: z.string(),
   description: z.string(),
   status: IssueStatusSchema,
-  priority: z.enum(["urgent", "high", "medium", "low", "none"]),
+  priority: PrioritySchema,
   labels: z.array(z.string()),
   seq: z.number(),
   updated_at: z.string(),
@@ -87,10 +90,27 @@ export const PlanSchema = z.object({
 });
 export type Plan = z.output<typeof PlanSchema>;
 
+const ISSUE_IDENTIFIER = /^[A-Z][A-Z0-9]*-\d+$/;
+
+/** Normalizes user input like ` mio-23 ` to `MIO-23`, or null when it is not an issue ID. */
+export function parseIssueIdentifier(text: string): string | null {
+  const identifier = text.trim().toUpperCase();
+  return ISSUE_IDENTIFIER.test(identifier) ? identifier : null;
+}
+
+/** The instance URL without trailing slashes; every API and web path hangs off it. */
+export function instanceRoot(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
+}
+
 /** Same route the Lific web UI and its own link builder use (src/links.rs). */
 export function issueWebUrl(baseUrl: string, identifier: string): string {
   const project = identifier.slice(0, identifier.lastIndexOf("-"));
-  return `${baseUrl.replace(/\/+$/, "")}/${project}/issues/${identifier}`;
+  return `${instanceRoot(baseUrl)}/${project}/issues/${identifier}`;
+}
+
+export function projectWebUrl(baseUrl: string, project: string): string {
+  return `${instanceRoot(baseUrl)}/${project}/overview`;
 }
 
 /** Web URL of a page (`P-DOC-n`) or plan (`P-PLAN-n`); links use the numeric id. */
@@ -98,14 +118,14 @@ export function resourceWebUrl(baseUrl: string, identifier: string, kind: "pages
   const marker = kind === "pages" ? "-DOC-" : "-PLAN-";
   const index = identifier.lastIndexOf(marker);
   const project = index > 0 ? identifier.slice(0, index) : "DOC";
-  return `${baseUrl.replace(/\/+$/, "")}/${project}/${kind}/${id}`;
+  return `${instanceRoot(baseUrl)}/${project}/${kind}/${id}`;
 }
 
 export const IssueCardSchema = z.object({
   identifier: z.string(),
   title: z.string(),
   status: IssueStatusSchema,
-  priority: z.string(),
+  priority: PrioritySchema,
   url: z.string(),
 });
 export type IssueCard = z.output<typeof IssueCardSchema>;

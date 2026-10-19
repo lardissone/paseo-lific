@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -73,14 +75,49 @@ export async function clearLinkedIssue(cwd: string): Promise<void> {
   if (location) await unsetBranchConfig(location, "lificIssue");
 }
 
-export async function writeRunStep(cwd: string, step: { plan: string; index: number; total: number }): Promise<void> {
+/** The plan step a branch was started for. */
+export interface RunStep {
+  plan: string;
+  index: number;
+  total: number;
+}
+
+export async function writeRunStep(cwd: string, step: RunStep): Promise<void> {
   const location = await locateBranch(cwd);
   if (location) await writeBranchConfig(location, "lificRunStep", `${step.plan} ${step.index}/${step.total}`);
 }
 
-export async function readRunStep(cwd: string): Promise<{ plan: string; index: number; total: number } | null> {
-  const location = await locateBranch(cwd);
+export async function readRunStep(location: BranchLocation | null): Promise<RunStep | null> {
   const value = location ? await readBranchConfig(location, "lificRunStep") : null;
   const match = value ? /^(\S+) (\d+)\/(\d+)$/.exec(value) : null;
   return match ? { plan: match[1]!, index: Number(match[2]), total: Number(match[3]) } : null;
+}
+
+/**
+ * Main checkout of the repository containing `cwd`, also from a linked worktree, as a real path.
+ * Every caller keys locks and compares paths with this form, so `/tmp` vs `/private/tmp` or a
+ * symlinked home cannot make one repository look like two.
+ */
+export async function repositoryRoot(cwd: string): Promise<string | null> {
+  // `--path-format=absolute` needs git 2.31; resolve the relative form ourselves instead.
+  const common = await gitOptional(cwd, ["rev-parse", "--git-common-dir"]);
+  if (!common) return null;
+  return canonicalPath(resolve(cwd, common, ".."));
+}
+
+export async function canonicalPath(path: string): Promise<string> {
+  return realpath(path).catch(() => resolve(path));
+}
+
+/** Local branches, most recently committed first, and the branch new work should start from. */
+export async function listBranches(repo: string): Promise<{ branches: string[]; defaultBranch: string | null }> {
+  const output = await gitOptional(repo, ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads"]);
+  const originHead = await gitOptional(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+  const branches = output ? output.split("\n") : [];
+  const remoteDefault = originHead?.replace(/^origin\//, "") ?? null;
+  const defaultBranch =
+    remoteDefault && branches.includes(remoteDefault)
+      ? remoteDefault
+      : (["main", "master"].find((name) => branches.includes(name)) ?? branches[0] ?? null);
+  return { branches, defaultBranch };
 }

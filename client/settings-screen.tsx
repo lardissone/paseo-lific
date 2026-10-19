@@ -1,4 +1,4 @@
-import { type PluginSurfaceProps, type SettingsState, useRpc, useSettings } from "@getpaseo/plugin/client";
+import { type PluginSurfaceProps, useRpc, useSettings } from "@getpaseo/plugin/client";
 import {
   SettingsAction,
   SettingsCard,
@@ -13,9 +13,8 @@ import { useCallback, useState } from "react";
 import { Text } from "react-native";
 import { checkConnection } from "../shared/rpc";
 import { isConfigured, lificSettings } from "../shared/settings";
-import { useGitProjects, useProviderOptions } from "./paseo-data";
+import { type ReadySettings, useGitProjects, useProvider } from "./paseo-data";
 
-type ReadySettings = Extract<SettingsState<typeof lificSettings.schema>, { status: "ready" }>;
 
 const AUTO = "__auto__";
 const HOST_DEFAULT = "__default__";
@@ -42,7 +41,7 @@ function ReadySettingsScreen({ settings, theme }: { settings: ReadySettings; the
   const check = useRpc(checkConnection);
   const connection = useMutation({ mutationFn: () => check({}) });
   const projects = useGitProjects();
-  const providers = useProviderOptions();
+  const providers = useProvider();
   const [draft, setDraft] = useState(() => ({
     baseUrl: settings.values.baseUrl,
     apiKey: settings.values.apiKey,
@@ -98,6 +97,11 @@ function ReadySettingsScreen({ settings, theme }: { settings: ReadySettings; the
             <SettingsAction label="Load Lific projects" actionLabel="Test" onPress={() => connection.mutate()} />
           ) : null}
         </SettingsCard>
+        {insecureUrl(draft.baseUrl) ? (
+          <Text accessibilityRole="alert" style={{ color: theme.colors.statusWarning }}>
+            This address is not HTTPS, so the API key travels unencrypted. Use HTTPS unless Lific runs on this machine.
+          </Text>
+        ) : null}
         {connection.data?.ok === false ? (
           <Text accessibilityRole="alert" style={{ color: theme.colors.statusDanger }}>
             {connection.data.error}
@@ -133,7 +137,7 @@ function ReadySettingsScreen({ settings, theme }: { settings: ReadySettings; the
             value={settings.values.defaultProvider || HOST_DEFAULT}
             options={[
               { label: "Ask each time", value: HOST_DEFAULT },
-              ...(providers.data ?? []).map(({ label, value }) => ({ label, value })),
+              ...providers.options.map(({ label, value }) => ({ label, value })),
             ]}
             disabled={settings.saving}
             onValueChange={(value) => update({ defaultProvider: value === HOST_DEFAULT ? "" : value })}
@@ -182,4 +186,10 @@ function ReadySettingsScreen({ settings, theme }: { settings: ReadySettings; the
       </SettingsSection>
     </>
   );
+}
+
+/** Plain HTTP to anything but this machine sends the bearer key in clear text. */
+function insecureUrl(url: string): boolean {
+  const match = /^http:\/\/([^/:]+)/i.exec(url.trim());
+  return match !== null && !["localhost", "127.0.0.1", "[::1]"].includes(match[1]!.toLowerCase());
 }

@@ -21,12 +21,13 @@ afterEach(async () => {
 const run: RunRecord = {
   plan: "MIO-PLAN-2",
   status: "paused",
-  reason: "review:MIO-23",
+  pause: { kind: "review", issue: "MIO-23" },
   mode: "review",
   branching: "stacked",
   base: "main",
   provider: "claude/opus",
-  archive: "yes",
+  approved: null,
+  archive: true,
 };
 
 describe("run records", () => {
@@ -34,9 +35,9 @@ describe("run records", () => {
     await writeRun(repo, run);
     expect(await listRuns(repo)).toEqual([run]);
 
-    const { reason: _reason, ...rest } = run;
-    await writeRun(repo, { ...rest, status: "running", approved: "MIO-23" });
-    expect(await readRun(repo, "MIO-PLAN-2")).toEqual({ ...rest, status: "running", approved: "MIO-23" });
+    const resumed = { ...run, status: "running" as const, pause: null, approved: "MIO-23" };
+    await writeRun(repo, resumed);
+    expect(await readRun(repo, "MIO-PLAN-2")).toEqual(resumed);
 
     await deleteRun(repo, "MIO-PLAN-2");
     expect(await listRuns(repo)).toEqual([]);

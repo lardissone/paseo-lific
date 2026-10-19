@@ -2,24 +2,23 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import {
   openExternalUrl,
   type PluginScreenProps,
-  type SettingsState,
   useRpc,
-  useSettings,
 } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import type { IssueCard } from "../shared/lific";
-import { controlRun, getBriefing, getHome, type Home } from "../shared/rpc";
-import { lificSettings } from "../shared/settings";
-import { Button, Card, CONTROL_HEIGHT, Chip, Message, errorText, priorityColor, statusColor } from "./kit";
-import { Markdown } from "./markdown";
+import type { IssueCard, IssueStatus } from "../shared/lific";
+import { errorMessage } from "../shared/errors";
+import { type ConfiguredHome, controlRun, getBriefing, getHome, type Home } from "../shared/rpc";
+import { describeRunPause, type RunControlAction } from "../shared/run";
+import { Button, Card, CONTROL_HEIGHT, Chip, Message, type OpenScreen, priorityColor, statusColor } from "./kit";
+import { MarkdownText } from "./markdown";
+import { useLificSettings } from "./paseo-data";
 
 const REFRESH_MS = 60_000;
 
 type Navigation = PluginScreenProps["navigation"];
-type OpenScreen = (input: { screenId: string; params?: Record<string, string> }) => void;
 
 /**
  * The Lific home: what agents are working on, what needs you, and what is ready to start.
@@ -53,7 +52,7 @@ export function createHomeScreen(openScreen: OpenScreen) {
         {home.error ? (
           <Card theme={theme}>
             <Message theme={theme} tone="danger">
-              Could not load Lific: {errorText(home.error)}
+              Could not load Lific: {errorMessage(home.error)}
             </Message>
           </Card>
         ) : null}
@@ -92,7 +91,7 @@ function Header({
   onStart(): void;
   onRunPlan(): void;
 }) {
-  const ready = home?.projects.reduce((sum, project) => sum + project.ready.length, 0) ?? 0;
+  const ready = home?.configured ? readyCount(home) : 0;
   const summary = home?.configured
     ? [
         plural(home.inProgress.length, "in progress", "in progress"),
@@ -165,7 +164,7 @@ function IssueLine({ theme, issue, trailing }: { theme: PluginTheme; issue: Issu
   );
 }
 
-function StatusPill({ theme, status }: { theme: PluginTheme; status: string }) {
+function StatusPill({ theme, status }: { theme: PluginTheme; status: IssueStatus }) {
   const color = statusColor(theme, status);
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
@@ -175,7 +174,7 @@ function StatusPill({ theme, status }: { theme: PluginTheme; status: string }) {
   );
 }
 
-function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entries: Home["inProgress"]; navigation: Navigation }) {
+function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entries: ConfiguredHome["inProgress"]; navigation: Navigation }) {
   return (
     <View style={{ gap: 10 }}>
       <SectionHeader theme={theme} icon="Bot" title="In progress" count={entries.length} />
@@ -202,23 +201,20 @@ function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entrie
   );
 }
 
-function runStatusText(run: Home["runs"][number]): string {
+function runStatusText(run: ConfiguredHome["runs"][number]): string {
+  if (run.pause) return describeRunPause(run.pause);
   if (run.status === "done") return "Complete";
-  if (run.status === "running") return run.current ? `Working on ${run.current.identifier || run.current.title}` : "Running";
-  const [why, issue] = (run.reason ?? "").split(":");
-  if (why === "review") return `Waiting for your review of ${issue}`;
-  if (why === "failed") return `Paused: an agent failed on ${issue}`;
-  if (why === "cancelled") return `Paused: ${issue} was cancelled`;
+  if (run.status === "running") return run.current ? `Working on ${run.current.identifier ?? run.current.title}` : "Running";
   return "Paused";
 }
 
-function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: Home["runs"]; onChanged(): void }) {
+function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: ConfiguredHome["runs"]; onChanged(): void }) {
   const control = useRpc(controlRun);
   const toast = useToast();
   const act = useMutation({
-    mutationFn: (input: { projectRoot: string; plan: string; action: "continue" | "pause" | "stop" }) => control(input),
+    mutationFn: (input: { projectRoot: string; plan: string; action: RunControlAction }) => control(input),
     onSuccess: onChanged,
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => toast.error(errorMessage(error)),
   });
   if (runs.length === 0) return null;
   return (
@@ -272,13 +268,13 @@ function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: Home["run
   );
 }
 
-const REASONS: Record<Home["needsYou"][number]["reason"], string> = {
+const REASONS: Record<ConfiguredHome["needsYou"][number]["reason"], string> = {
   assigned: "Assigned to you",
   waiting: "Waiting on you",
   human: "For anyone",
 };
 
-function NeedsYou({ theme, issues }: { theme: PluginTheme; issues: Home["needsYou"] }) {
+function NeedsYou({ theme, issues }: { theme: PluginTheme; issues: ConfiguredHome["needsYou"] }) {
   return (
     <View style={{ gap: 10 }}>
       <SectionHeader theme={theme} icon="Hand" title="Needs you" count={issues.length} />
@@ -317,10 +313,10 @@ function ReadyToStart({
   onStart,
 }: {
   theme: PluginTheme;
-  home: Home;
+  home: ConfiguredHome;
   onStart(params: Record<string, string>): void;
 }) {
-  const total = home.projects.reduce((sum, project) => sum + project.ready.length, 0);
+  const total = readyCount(home);
   return (
     <View style={{ gap: 10 }}>
       <SectionHeader theme={theme} icon="Sparkles" title="Ready to start" count={total} />
@@ -363,27 +359,28 @@ function ReadyToStart({
   );
 }
 
-type ReadySettings = Extract<SettingsState<typeof lificSettings.schema>, { status: "ready" }>;
-
 function Briefing({ theme, projects }: { theme: PluginTheme; projects: string[] }) {
-  const settings = useSettings(lificSettings);
+  const { values, patch } = useLificSettings();
   // The request captures `since` when the user asks, so recording the new cursor does not refetch.
   const [request, setRequest] = useState<{ project: string; since?: string } | null>(null);
   const fetchBriefing = useRpc(getBriefing);
 
   const briefing = useQuery({
     queryKey: ["briefing", request],
-    queryFn: async () => {
-      const result = await fetchBriefing(request!);
-      if (settings.status === "ready") await markSeen(settings, request!.project, result.fetchedAt);
-      return result;
-    },
+    queryFn: () => fetchBriefing(request!),
     enabled: request !== null,
     staleTime: Infinity,
   });
 
+  // Record what was shown, so the next "since last time" starts here.
+  const shown = briefing.data && request ? { project: request.project, at: briefing.data.fetchedAt } : null;
+  useEffect(() => {
+    if (!shown || !values || values.briefingSeenAt[shown.project] === shown.at) return;
+    void patch({ briefingSeenAt: { ...values.briefingSeenAt, [shown.project]: shown.at } });
+  }, [shown?.project, shown?.at]);
+
   function show(project: string, sinceLastTime: boolean) {
-    const seenAt = settings.status === "ready" ? settings.values.briefingSeenAt[project] : undefined;
+    const seenAt = values?.briefingSeenAt[project];
     setRequest({ project, ...(sinceLastTime && seenAt ? { since: seenAt } : {}) });
   }
 
@@ -413,20 +410,13 @@ function Briefing({ theme, projects }: { theme: PluginTheme; projects: string[] 
             ) : null}
           </View>
           {briefing.isLoading ? <Loading theme={theme} /> : null}
-          {briefing.error ? <Message theme={theme} tone="danger">{errorText(briefing.error)}</Message> : null}
-          {briefing.data ? <Markdown theme={theme} source={briefing.data.markdown} /> : null}
+          {briefing.error ? <Message theme={theme} tone="danger">{errorMessage(briefing.error)}</Message> : null}
+          {briefing.data ? <MarkdownText theme={theme} source={briefing.data.markdown} /> : null}
         </Card>
       ) : (
         <Message theme={theme}>Pick a project to see what changed since you last looked.</Message>
       )}
     </View>
-  );
-}
-
-async function markSeen(settings: ReadySettings, project: string, at: string) {
-  await settings.save(
-    { ...settings.values, briefingSeenAt: { ...settings.values.briefingSeenAt, [project]: at } },
-    settings.revision,
   );
 }
 
@@ -455,6 +445,10 @@ function Loading({ theme }: { theme: PluginTheme }) {
       <ActivityIndicator color={theme.colors.foregroundMuted} />
     </View>
   );
+}
+
+function readyCount(home: ConfiguredHome): number {
+  return home.projects.reduce((sum, project) => sum + project.ready.length, 0);
 }
 
 function plural(count: number, one: string, many: string): string {

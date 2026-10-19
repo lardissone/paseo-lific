@@ -1,42 +1,30 @@
-import { type PluginScreenProps, useRpc, useSettings } from "@getpaseo/plugin/client";
-import { TextInput, useToast } from "@getpaseo/plugin/client/react-native";
-import {
-  SettingsCard,
-  SettingsInput,
-  type SettingsInputHandle,
-  SettingsSelect,
-} from "@getpaseo/plugin/client/ui";
+import { type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
+import { useToast } from "@getpaseo/plugin/client/react-native";
+import { SettingsCard, SettingsInput, type SettingsInputHandle } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { renderBranchName } from "../shared/branch";
-import { type IssueSummary, listBranches, listIssues, resolveProject, startWork } from "../shared/rpc";
-import { lificSettings } from "../shared/settings";
-import { Button, Chip, Message, Section, errorText, useDebounced } from "./kit";
-import { useGitProjects, useProviderOptions } from "./paseo-data";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { View } from "react-native";
+import { DEFAULT_BRANCH_TEMPLATE, renderBranchName } from "../shared/branch";
+import { errorMessage } from "../shared/errors";
+import { type IssueSummary, listIssues, resolveProject, startWork } from "../shared/rpc";
+import { AgentSelect, BaseBranchSelect, ProjectPicker } from "./form-fields";
+import { Button, Message, ScreenScaffold, Section, SelectableRow, TextField, useDebounced } from "./kit";
+import { useBaseBranch, useLificSettings, useProjectRoot, useProvider } from "./paseo-data";
 
 export function StartWorkScreen({ theme, layout, params, navigation }: PluginScreenProps) {
-  const settings = useSettings(lificSettings);
-  const projects = useGitProjects();
-  const providers = useProviderOptions();
-  const [projectRoot, setProjectRoot] = useState<string | null>(params.projectRoot ?? null);
+  const { values } = useLificSettings();
+  const { projects, projectRoot, setProjectRoot } = useProjectRoot(params.projectRoot);
+  const { branches, baseBranch, setBaseBranch, remember } = useBaseBranch(projectRoot);
+  const agent = useProvider();
   const [query, setQuery] = useState(params.identifier ?? "");
   const [issue, setIssue] = useState<IssueSummary | null>(null);
-  const [baseBranch, setBaseBranch] = useState<string | null>(null);
   const [branchName, setBranchName] = useState("");
-  const [provider, setProvider] = useState<string | null>(null);
   const branchInput = useRef<SettingsInputHandle>(null);
   const toast = useToast();
 
-  const values = settings.status === "ready" ? settings.values : null;
   const fetchIssues = useRpc(listIssues);
-  const fetchBranches = useRpc(listBranches);
   const fetchProject = useRpc(resolveProject);
   const start = useRpc(startWork);
-
-  useEffect(() => {
-    if (projectRoot === null && projects.data?.length === 1) setProjectRoot(projects.data[0]!.root);
-  }, [projectRoot, projects.data]);
 
   const project = useQuery({
     queryKey: ["project", projectRoot],
@@ -49,27 +37,17 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
     queryFn: () => fetchIssues({ projectRoot: projectRoot!, query: issueQuery }),
     enabled: projectRoot !== null && project.data?.kind === "resolved",
   });
-  const branches = useQuery({
-    queryKey: ["branches", projectRoot],
-    queryFn: () => fetchBranches({ projectRoot: projectRoot! }),
-    enabled: projectRoot !== null,
-  });
 
-  // Preselect the remembered base branch, then the repository default.
-  useEffect(() => {
-    if (!branches.data || !projectRoot) return;
-    const remembered = values?.lastBaseBranch[projectRoot];
-    setBaseBranch(
-      remembered && branches.data.branches.includes(remembered) ? remembered : branches.data.defaultBranch,
-    );
-  }, [branches.data, projectRoot, values?.lastBaseBranch]);
-
-  useEffect(() => {
-    if (provider !== null || !providers.data?.length) return;
-    const preferred = values?.defaultProvider;
-    const match = providers.data.find((option) => option.value === preferred);
-    setProvider((match ?? providers.data.find((option) => option.isDefault) ?? providers.data[0]!).value);
-  }, [provider, providers.data, values?.defaultProvider]);
+  const branchTemplate = values?.branchTemplate ?? DEFAULT_BRANCH_TEMPLATE;
+  const pickIssue = useCallback(
+    (next: IssueSummary) => {
+      setIssue(next);
+      const name = renderBranchName(branchTemplate, next);
+      setBranchName(name);
+      branchInput.current?.replaceText(name);
+    },
+    [branchTemplate],
+  );
 
   // Opened from the home screen with an issue: select it as soon as it is listed.
   const requested = params.identifier;
@@ -77,14 +55,7 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
     if (!requested || issue) return;
     const match = issues.data?.issues.find((candidate) => candidate.identifier === requested);
     if (match) pickIssue(match);
-  }, [requested, issue, issues.data]);
-
-  function pickIssue(next: IssueSummary) {
-    setIssue(next);
-    const name = renderBranchName(values?.branchTemplate ?? "{slug}", next);
-    setBranchName(name);
-    branchInput.current?.replaceText(name);
-  }
+  }, [requested, issue, issues.data, pickIssue]);
 
   const launch = useMutation({
     mutationFn: async () => {
@@ -93,62 +64,44 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
         projectRoot: projectRoot!,
         baseBranch: baseBranch!,
         branchName: branchName.trim(),
-        provider: provider!,
+        provider: agent.provider!,
       });
-      if (settings.status === "ready") {
-        await settings.save(
-          {
-            ...settings.values,
-            lastBaseBranch: { ...settings.values.lastBaseBranch, [projectRoot!]: baseBranch! },
-          },
-          settings.revision,
-        );
-      }
+      await remember();
       return result;
     },
     onSuccess: ({ workspaceId }) => {
       toast.show(`Started ${issue!.identifier}`, { variant: "success" });
       navigation?.openWorkspace({ workspaceId });
     },
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => toast.error(errorMessage(error)),
   });
 
   const canStart =
-    issue !== null && projectRoot !== null && baseBranch !== null && branchName.trim() !== "" && provider !== null;
+    issue !== null && projectRoot !== null && baseBranch !== null && branchName.trim() !== "" && agent.provider !== null;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
-      contentContainerStyle={{ padding: layout.compact ? 16 : 24, gap: 20, maxWidth: 760 }}
+    <ScreenScaffold
+      theme={theme}
+      compact={layout.compact}
+      title="Start work"
+      description="Pick an issue and Paseo creates a worktree on a new branch and starts an agent on it."
     >
-      <View style={{ gap: 2 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: 22, fontWeight: "700" }}>Start work</Text>
-        <Text style={{ color: theme.colors.foregroundMuted }}>
-          Pick an issue and Paseo creates a worktree on a new branch and starts an agent on it.
-        </Text>
-      </View>
-
-      {values && !values.baseUrl ? (
+      {project.data?.kind === "unconfigured" ? (
         <Message theme={theme} tone="danger">
           Lific is not configured. Open Settings → Plugins → Lific to add the URL and API key.
         </Message>
       ) : null}
 
       <Section theme={theme} title="Project">
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {(projects.data ?? []).map((candidate) => (
-            <Chip
-              key={candidate.root}
-              theme={theme}
-              label={candidate.name}
-              selected={candidate.root === projectRoot}
-              onPress={() => {
-                setProjectRoot(candidate.root);
-                setIssue(null);
-              }}
-            />
-          ))}
-        </View>
+        <ProjectPicker
+          theme={theme}
+          projects={projects.data ?? []}
+          value={projectRoot}
+          onChange={(root) => {
+            setProjectRoot(root);
+            setIssue(null);
+          }}
+        />
         {project.data?.kind === "resolved" ? (
           <Message theme={theme}>
             Lific project {project.data.project.identifier} · {project.data.project.name}
@@ -161,67 +114,36 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
         ) : null}
         {project.data?.kind === "conflict" ? (
           <Message theme={theme} tone="danger">
-            This repository is bound to several Lific projects (
-            {project.data.projects.map((p) => p.identifier).join(", ")}). Pick one in settings.
+            This repository is bound to several Lific projects ({project.data.projects.map((p) => p.identifier).join(", ")}).
+            Pick one in settings.
           </Message>
         ) : null}
-        {project.error ? <Message theme={theme} tone="danger">{errorText(project.error)}</Message> : null}
+        {project.error ? <Message theme={theme} tone="danger">{errorMessage(project.error)}</Message> : null}
       </Section>
 
       {project.data?.kind === "resolved" ? (
         <Section theme={theme} title="Issue">
-          <TextInput
+          <TextField
+            theme={theme}
             value={query}
             onChangeText={setQuery}
             placeholder="Search, or type an ID like MIO-23. Empty shows workable issues."
-            placeholderTextColor={theme.colors.foregroundMuted}
-            autoCapitalize="none"
-            style={{
-              color: theme.colors.foreground,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-              borderRadius: 8,
-              paddingHorizontal: 10,
-              paddingVertical: 8,
-              backgroundColor: theme.colors.surface1,
-            }}
           />
           {issues.isLoading ? <Message theme={theme}>Loading issues…</Message> : null}
-          {issues.error ? <Message theme={theme} tone="danger">{errorText(issues.error)}</Message> : null}
+          {issues.error ? <Message theme={theme} tone="danger">{errorMessage(issues.error)}</Message> : null}
           {issues.data?.issues.length === 0 ? <Message theme={theme}>No matching issues.</Message> : null}
           <View style={{ gap: 2 }}>
-            {(issues.data?.issues ?? []).map((candidate) => {
-              const selected = candidate.identifier === issue?.identifier;
-              return (
-                <Pressable
-                  key={candidate.identifier}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  onPress={() => pickIssue(candidate)}
-                  style={{
-                    flexDirection: "row",
-                    gap: 10,
-                    paddingHorizontal: 10,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    backgroundColor: selected ? theme.colors.surface2 : "transparent",
-                  }}
-                >
-                  <Text
-                    numberOfLines={1}
-                    style={{ color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"], minWidth: 64, flexShrink: 0 }}
-                  >
-                    {candidate.identifier}
-                  </Text>
-                  <Text style={{ color: theme.colors.foreground, flex: 1 }} numberOfLines={2}>
-                    {candidate.title}
-                  </Text>
-                  {candidate.status ? (
-                    <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{candidate.status}</Text>
-                  ) : null}
-                </Pressable>
-              );
-            })}
+            {(issues.data?.issues ?? []).map((candidate) => (
+              <SelectableRow
+                key={candidate.identifier}
+                theme={theme}
+                selected={candidate.identifier === issue?.identifier}
+                onPress={() => pickIssue(candidate)}
+                identifier={candidate.identifier}
+                title={candidate.title}
+                trailing={candidate.status}
+              />
+            ))}
           </View>
         </Section>
       ) : null}
@@ -229,12 +151,7 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
       {issue ? (
         <Section theme={theme} title="Workspace">
           <SettingsCard>
-            <SettingsSelect
-              label="Base branch"
-              value={baseBranch ?? ""}
-              options={(branches.data?.branches ?? []).map((name) => ({ label: name, value: name }))}
-              onValueChange={setBaseBranch}
-            />
+            <BaseBranchSelect branches={branches} value={baseBranch} onChange={setBaseBranch} />
             <SettingsInput
               ref={branchInput}
               label="New branch"
@@ -242,12 +159,7 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
               onChangeText={setBranchName}
               placeholder="branch-name"
             />
-            <SettingsSelect
-              label="Agent"
-              value={provider ?? ""}
-              options={(providers.data ?? []).map(({ label, value }) => ({ label, value }))}
-              onValueChange={setProvider}
-            />
+            <AgentSelect options={agent.options} value={agent.provider} onChange={agent.setProvider} />
           </SettingsCard>
           <Button
             theme={theme}
@@ -263,6 +175,6 @@ export function StartWorkScreen({ theme, layout, params, navigation }: PluginScr
           </Message>
         </Section>
       ) : null}
-    </ScrollView>
+    </ScreenScaffold>
   );
 }

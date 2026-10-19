@@ -1,12 +1,12 @@
 import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
-import { IssuePanel } from "./client/issue-panel";
-import { LificSettingsScreen } from "./client/settings-screen";
-import { StartWorkScreen } from "./client/start-work-screen";
 import { createHomeScreen } from "./client/home-screen";
+import { IssuePanel } from "./client/issue-panel";
 import { MentionsRow } from "./client/mentions-row";
 import { NoteCard } from "./client/note-card";
 import { createRunPlanScreen } from "./client/run-plan-screen";
+import { LificSettingsScreen } from "./client/settings-screen";
+import { StartWorkScreen } from "./client/start-work-screen";
 import { MENTIONS_KIND, MENTIONS_VERSION, MentionsSchema } from "./shared/mentions";
 import { NOTE_KIND, NOTE_VERSION, NoteSchema } from "./shared/note";
 import { lificAttachments, runSlashCommand, type SlashCommand } from "./shared/rpc";
@@ -19,24 +19,36 @@ const SLASH_COMMANDS: { name: SlashCommand; description: string; argumentHint: s
   { name: "briefing", description: "Show the Lific project briefing", argumentHint: "[since, e.g. 2026-10-01]" },
 ];
 
+/** Command Center entries that open one of the plugin's screens. */
+const SCREEN_COMMANDS = [
+  { id: "home", title: "Lific: Open home", icon: "SquareKanban", keywords: ["queue", "briefing", "issues"], screenId: "home" },
+  { id: "start-work", title: "Lific: Start work on an issue", icon: "Play", keywords: ["issue", "worktree"], screenId: "start" },
+  { id: "run-plan", title: "Lific: Run a plan", icon: "ListChecks", keywords: ["plan", "steps", "runner"], screenId: "plan" },
+];
+
 function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
-  return (
-    <SidebarRow
-      icon="SquareKanban"
-      active={currentScreen !== null}
-      onPress={() => openScreen({ screenId: "home" })}
-    />
-  );
+  return <SidebarRow icon="SquareKanban" active={currentScreen !== null} onPress={() => openScreen({ screenId: "home" })} />;
 }
 
 export default function contribute(client: PluginClientContext) {
+  // Screen props cannot open other plugin screens, so these screens receive the entry's openScreen.
   client.addScreen({ id: "home", title: "Lific", Component: createHomeScreen(client.openScreen) });
   client.addScreen({ id: "plan", title: "Run a plan", Component: createRunPlanScreen(client.openScreen) });
   client.addScreen({ id: "start", title: "Start work from Lific", Component: StartWorkScreen });
   client.addSidebarHeaderItem({ id: "home", title: "Lific", Component: LificSidebarItem });
+  client.addSettingsScreen({ id: "lific", title: "Lific", icon: "SquareKanban", Component: LificSettingsScreen });
+  client.addWorkspacePanel({
+    id: "issue",
+    title: "Lific issue",
+    icon: "SquareKanban",
+    context: "workspace",
+    locations: ["workspace", "explorer"],
+    Component: IssuePanel,
+  });
   client.addAttachmentSource(lificAttachments);
   client.addTimelineRenderer({ kind: MENTIONS_KIND, version: MENTIONS_VERSION, schema: MentionsSchema, Component: MentionsRow });
   client.addTimelineRenderer({ kind: NOTE_KIND, version: NOTE_VERSION, schema: NoteSchema, Component: NoteCard });
+
   for (const command of SLASH_COMMANDS) {
     client.addSlashCommand({
       ...command,
@@ -52,26 +64,10 @@ export default function contribute(client: PluginClientContext) {
       },
     });
   }
-  client.addSettingsScreen({ id: "lific", title: "Lific", icon: "SquareKanban", Component: LificSettingsScreen });
-  client.addWorkspacePanel({
-    id: "issue",
-    title: "Lific issue",
-    icon: "SquareKanban",
-    context: "workspace",
-    locations: ["workspace", "explorer"],
-    Component: IssuePanel,
-  });
 
-  client.addCommandCenterItem({
-    id: "start-work",
-    title: "Lific: Start work on an issue",
-    icon: "Play",
-    keywords: ["issue", "worktree"],
-    context: "global",
-    onSelect({ openScreen }) {
-      openScreen({ screenId: "start" });
-    },
-  });
+  for (const { screenId, ...item } of SCREEN_COMMANDS) {
+    client.addCommandCenterItem({ ...item, context: "global", onSelect: ({ openScreen }) => openScreen({ screenId }) });
+  }
   client.addCommandCenterItem({
     id: "start-work-in-project",
     title: "Lific: Start work on an issue in this project",
@@ -87,38 +83,14 @@ export default function contribute(client: PluginClientContext) {
     title: "Lific: Show linked issue",
     icon: "SquareKanban",
     context: "workspace",
-    onSelect({ openPanel }) {
-      openPanel("issue");
-    },
-  });
-  client.addCommandCenterItem({
-    id: "home",
-    title: "Lific: Open home",
-    icon: "SquareKanban",
-    keywords: ["queue", "briefing", "issues"],
-    context: "global",
-    onSelect({ openScreen }) {
-      openScreen({ screenId: "home" });
-    },
-  });
-  client.addCommandCenterItem({
-    id: "run-plan",
-    title: "Lific: Run a plan",
-    icon: "ListChecks",
-    keywords: ["plan", "steps", "runner"],
-    context: "global",
-    onSelect({ openScreen }) {
-      openScreen({ screenId: "plan" });
-    },
+    onSelect: ({ openPanel }) => openPanel("issue"),
   });
   client.addCommandCenterItem({
     id: "settings",
     title: "Lific: Settings",
     icon: "Settings",
     context: "global",
-    onSelect({ openSettings }) {
-      openSettings("lific");
-    },
+    onSelect: ({ openSettings }) => openSettings("lific"),
   });
   return () => {};
 }

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearLinkedIssue, git, readLinkedIssue, writeLinkedIssue } from "./git";
+import { canonicalPath, clearLinkedIssue, git, listBranches, readLinkedIssue, repositoryRoot, writeLinkedIssue } from "./git";
 
 let repo: string;
 
@@ -42,5 +42,26 @@ describe("issue link", () => {
     await writeLinkedIssue(repo, "MIO-23");
     await clearLinkedIssue(repo);
     expect(await readLinkedIssue(repo)).toBeNull();
+  });
+});
+
+describe("repositoryRoot", () => {
+  it("returns the main checkout's real path from a linked worktree", async () => {
+    const worktree = `${repo}-root-wt`;
+    await git(repo, ["worktree", "add", "-q", "-b", "side", worktree]);
+    try {
+      const expected = await canonicalPath(repo);
+      expect(await repositoryRoot(worktree)).toBe(expected);
+      expect(await repositoryRoot(repo)).toBe(expected);
+    } finally {
+      await rm(worktree, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listBranches", () => {
+  it("prefers main as the default when origin has no HEAD", async () => {
+    await git(repo, ["branch", "feature"]);
+    expect(await listBranches(repo)).toMatchObject({ defaultBranch: "main" });
   });
 });

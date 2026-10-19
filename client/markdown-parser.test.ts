@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown } from "./markdown";
+import { parseInline, parseMarkdown } from "./markdown-parser";
 
 describe("parseInline", () => {
   it("splits links, bold, code, and italics from text", () => {

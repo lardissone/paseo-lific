@@ -1,143 +1,181 @@
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
+import { errorMessage } from "./shared/errors";
 import { MENTIONS_KIND, MENTIONS_VERSION } from "./shared/mentions";
 import {
   addIssueComment,
   checkConnection,
   controlRun,
-  getPlanPreview,
-  listPlans,
-  startRun,
   getBriefing,
   getHome,
+  getPlanPreview,
   getWorkspaceIssue,
   linkWorkspaceIssue,
   listBranches,
   listIssues,
+  listPlans,
   resolveProject,
   runSlashCommand,
   searchAttachments,
   setIssueStatus,
+  startRun,
   startWork,
 } from "./shared/rpc";
 import { lificSettings } from "./shared/settings";
+import { searchAttachments as searchLificAttachments } from "./server/attachments";
 import { runSlashCommand as runCommand } from "./server/commands";
-import { readLinkedIssue } from "./server/git";
+import { createConnection } from "./server/connection";
+import { listBranches as listGitBranches } from "./server/git";
+import { loadHome } from "./server/home";
 import { createLifecycleReporter } from "./server/lifecycle";
+import { mentionedIssueCards } from "./server/mentions";
 import { createPlanRunner } from "./server/plan-runner";
-import { createLificService } from "./server/service";
+import { listPlans as listLificPlans, planPreview } from "./server/plans";
+import { listIssues as listLificIssues, startWork as startLificWork } from "./server/work";
+import {
+  addIssueComment as addLificComment,
+  instructionsFor,
+  linkWorkspace,
+  setIssueStatus as setLificStatus,
+  workspaceIssue,
+} from "./server/workspace-issue";
+
+type PaseoApi = PluginHandlerContext["paseo"];
+
+/** Agent creation waits on the before hook; a slow Lific must not hold it near the daemon's 30 s limit. */
+const INSTRUCTIONS_BUDGET_MS = 5_000;
 
 export default function contribute(server: PluginServerContext) {
-  const lific = createLificService(server.registerSettings(lificSettings));
+  const connections = createConnection(server.registerSettings(lificSettings));
   const runner = createPlanRunner({
-    async connection() {
-      const connection = await lific.connection();
-      return connection
-        ? { client: connection.client, baseUrl: connection.settings.baseUrl, branchTemplate: connection.settings.branchTemplate }
-        : null;
-    },
-    startWork: (input, paseo) => lific.startWork(input, paseo),
+    connections,
+    startWork: (input, paseo) => startLificWork(connections, input, paseo),
+  });
+  const reporter = createLifecycleReporter({
+    connect: connections.optional,
+    onStepFailed: runner.stepFailed,
+    onStepAbandoned: runner.stepAbandoned,
   });
 
-  server.handle(checkConnection, () => lific.checkConnection());
-  server.handle(resolveProject, ({ projectRoot }) => lific.resolveProject(projectRoot));
-  server.handle(getWorkspaceIssue, ({ directory }) => lific.workspaceIssue(directory));
-  server.handle(linkWorkspaceIssue, ({ directory, identifier }) =>
-    lific.linkWorkspace(directory, identifier),
-  );
-  server.handle(listIssues, ({ projectRoot, query }) => lific.listIssues(projectRoot, query));
-  server.handle(setIssueStatus, ({ identifier, status }) => lific.setStatus(identifier, status));
-  server.handle(addIssueComment, ({ identifier, content }) => lific.addComment(identifier, content));
-  server.handle(listBranches, ({ projectRoot }) => lific.listBranches(projectRoot));
-  server.handle(searchAttachments, ({ query }) => lific.searchAttachments(query));
-  server.handle(runSlashCommand, async (input, { paseo }) => {
-    await runCommand(input, paseo, {
-      connect: async () => {
-        const connection = await lific.connection();
-        if (!connection) throw new Error("Lific is not configured. Add the URL and API key in the plugin settings.");
-        return { client: connection.client, baseUrl: connection.settings.baseUrl };
-      },
-      resolveProject: lific.resolveProject,
-    });
+  // Running plans advance on a poller that needs a Paseo API, which plugin code only receives
+  // inside handlers and hooks. Each entry that has one hands it over; the first starts polling.
+  const withPaseo = (paseo: PaseoApi) => runner.ensurePolling(paseo);
+
+  server.handle(checkConnection, async () => {
+    try {
+      const connection = await connections.require();
+      return { ok: true as const, projects: await connection.client.listProjects() };
+    } catch (error) {
+      return { ok: false as const, error: errorMessage(error) };
+    }
+  });
+  server.handle(resolveProject, ({ projectRoot }) => connections.resolveProject(projectRoot));
+  server.handle(getWorkspaceIssue, ({ directory }) => workspaceIssue(connections, directory));
+  server.handle(linkWorkspaceIssue, async ({ directory, identifier }) => {
+    await linkWorkspace(connections, directory, identifier);
     return {};
   });
-  server.handle(getHome, (_input, { paseo }) => {
-    runner.ensurePolling(paseo);
-    return lific.home(paseo);
+  server.handle(listIssues, ({ projectRoot, query }) => listLificIssues(connections, projectRoot, query));
+  server.handle(setIssueStatus, async ({ identifier, status }) => {
+    await setLificStatus(connections, identifier, status);
+    return {};
   });
-  server.handle(listPlans, ({ projectRoot }) => lific.listPlans(projectRoot));
-  server.handle(getPlanPreview, ({ identifier }) => lific.planPreview(identifier));
+  server.handle(addIssueComment, async ({ identifier, content }) => {
+    await addLificComment(connections, identifier, content);
+    return {};
+  });
+  server.handle(listBranches, ({ projectRoot }) => listGitBranches(projectRoot));
+  server.handle(searchAttachments, async ({ query }) => {
+    const { client, settings } = await connections.require();
+    return { items: await searchLificAttachments(client, settings.baseUrl, query) };
+  });
+  server.handle(runSlashCommand, async (input, { paseo }) => {
+    withPaseo(paseo);
+    await runCommand(connections, input, paseo);
+    return {};
+  });
+  server.handle(getBriefing, async ({ project, since }) => {
+    const { client } = await connections.require();
+    const fetchedAt = new Date().toISOString();
+    return { markdown: await client.getBriefing(project, since), fetchedAt };
+  });
+  server.handle(getHome, (_input, { paseo }) => {
+    withPaseo(paseo);
+    return loadHome(connections, paseo);
+  });
+  server.handle(startWork, (input, { paseo }) => {
+    withPaseo(paseo);
+    return startLificWork(connections, input, paseo);
+  });
+  server.handle(listPlans, ({ projectRoot }) => listLificPlans(connections, projectRoot));
+  server.handle(getPlanPreview, ({ identifier }) => planPreview(connections, identifier));
   server.handle(startRun, async ({ projectRoot, archivePrevious, ...run }, { paseo }) => {
-    runner.ensurePolling(paseo);
-    await runner.start(projectRoot, { ...run, archive: archivePrevious ? "yes" : "no" }, paseo);
+    withPaseo(paseo);
+    await runner.start(projectRoot, { ...run, archive: archivePrevious }, paseo);
     return {};
   });
   server.handle(controlRun, async ({ projectRoot, plan, action }, { paseo }) => {
-    runner.ensurePolling(paseo);
+    withPaseo(paseo);
     await runner.control(projectRoot, plan, action, paseo);
     return {};
   });
-  server.handle(getBriefing, ({ project, since }) => lific.briefing(project, since));
-  server.handle(startWork, (input, { paseo }) => lific.startWork(input, paseo));
 
   server.before("agent.create", async ({ request }) => {
     const cwd = request.config.cwd;
     let instructions: string | null;
     try {
-      instructions = await lific.instructionsFor(cwd);
+      instructions = await withTimeout(instructionsFor(connections, cwd), INSTRUCTIONS_BUDGET_MS);
     } catch (error) {
-      // Agent creation must not fail because Lific is unreachable.
-      console.error(`Lific context for ${cwd} unavailable:`, error instanceof Error ? error.message : error);
+      // Agent creation must not fail because Lific is slow or unreachable.
+      console.error(`Lific context for ${cwd} unavailable:`, errorMessage(error));
       return undefined;
     }
     if (!instructions) return undefined;
-    const systemPrompt = request.config.systemPrompt
-      ? `${request.config.systemPrompt}\n\n${instructions}`
-      : instructions;
+    const systemPrompt = request.config.systemPrompt ? `${request.config.systemPrompt}\n\n${instructions}` : instructions;
     return { ...request, config: { ...request.config, systemPrompt } };
   });
 
-  const reporter = createLifecycleReporter(() => lific.connection());
   server.on("agent.permission_requested", ({ agent, request }) => {
     if (request.kind === "question") void reporter.questionAsked(agent.cwd, request);
   });
   server.on("agent.permission_resolved", ({ agent, requestId }) => {
     void reporter.questionResolved(agent.cwd, requestId);
   });
-  server.on("agent.turn_ended", ({ agent, outcome, turnId, timeline }, { paseo }) => {
-    runner.ensurePolling(paseo);
+  server.on("agent.turn_ended", ({ agent, outcome, timeline }, { paseo }) => {
+    withPaseo(paseo);
     void reporter.turnEnded(agent.cwd, outcome);
-    if (outcome.kind === "completed") {
-      void appendMentions(paseo, agent.id, turnId, timeline);
-      void runner.onActivity(agent.cwd, paseo);
-    }
-    if (outcome.kind === "failed") {
-      void readLinkedIssue(agent.cwd).then((issue) => (issue ? runner.pauseForFailure(agent.cwd, issue) : undefined));
-    }
+    if (outcome.kind !== "completed") return;
+    void appendMentions(paseo, agent.id, timeline);
+    void runner.onActivity(agent.cwd, paseo).catch((error) => console.error("Lific plan advance failed:", errorMessage(error)));
   });
   server.on("workspace.archived", ({ workspace }, { paseo }) => {
+    withPaseo(paseo);
     void reporter.workspaceArchived(workspace, paseo);
   });
 
-  async function appendMentions(
-    paseo: PluginHandlerContext["paseo"],
-    agentId: string,
-    turnId: string | null,
-    timeline: Parameters<typeof lific.mentionedIssueCards>[0],
-  ) {
+  async function appendMentions(paseo: PaseoApi, agentId: string, timeline: Parameters<typeof mentionedIssueCards>[1]) {
     try {
-      const issues = await lific.mentionedIssueCards(timeline);
+      const issues = await mentionedIssueCards(connections, timeline);
       if (issues.length === 0) return;
       await paseo.agents.ref(agentId).timeline.append({
         type: "plugin",
-        id: `mentions-${turnId ?? Date.now()}`,
+        // Turn ids can repeat after a session reopens, so they cannot key the row.
+        id: `mentions-${Date.now()}`,
         kind: MENTIONS_KIND,
         version: MENTIONS_VERSION,
         data: { issues },
       });
     } catch (error) {
-      console.error("Lific mentions failed:", error instanceof Error ? error.message : error);
+      console.error("Lific mentions failed:", errorMessage(error));
     }
   }
 
   return () => runner.stop();
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }

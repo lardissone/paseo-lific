@@ -1,19 +1,15 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import { issueWebUrl } from "../shared/lific";
+import { issueWebUrl, parseIssueIdentifier, projectWebUrl } from "../shared/lific";
 import type { Note } from "../shared/note";
-import type { ProjectResolution, SlashCommand } from "../shared/rpc";
-import { readLinkedIssue, writeLinkedIssue } from "./git";
-import type { LificClient } from "./lific-client";
+import type { SlashCommand } from "../shared/rpc";
+import type { Connections } from "./connection";
+import { readLinkedIssue } from "./git";
 import { appendNote } from "./notes";
+import { linkWorkspace } from "./workspace-issue";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
 const MAX_TITLE = 120;
-
-interface CommandDeps {
-  connect(): Promise<{ client: LificClient; baseUrl: string }>;
-  resolveProject(projectRoot: string): Promise<ProjectResolution>;
-}
 
 interface CommandInput {
   command: SlashCommand;
@@ -23,20 +19,23 @@ interface CommandInput {
   projectRoot: string;
 }
 
-export async function runSlashCommand(input: CommandInput, paseo: PaseoApi, deps: CommandDeps): Promise<void> {
-  const note = await commandNote(input, deps);
+/** Runs a slash command and reports its result as a note card in the agent's timeline. */
+export async function runSlashCommand(connections: Connections, input: CommandInput, paseo: PaseoApi): Promise<void> {
+  const note = await commandNote(connections, input);
   await appendNote(paseo, input.agentId, `${input.command}-${Date.now()}`, note);
 }
 
-async function commandNote(input: CommandInput, deps: CommandDeps): Promise<Note> {
-  const { client, baseUrl } = await deps.connect();
+async function commandNote(connections: Connections, input: CommandInput): Promise<Note> {
+  const { client, settings } = await connections.require();
+  const baseUrl = settings.baseUrl;
   const args = input.args.trim();
 
   switch (input.command) {
     case "issue": {
-      if (args === "") throw new Error("Usage: /issue MIO-23");
-      const issue = await client.getIssue(args.toUpperCase());
-      await writeLinkedIssue(input.directory, issue.identifier);
+      const identifier = parseIssueIdentifier(args);
+      if (!identifier) throw new Error("Usage: /issue MIO-23");
+      const issue = await client.getIssue(identifier);
+      await linkWorkspace(connections, input.directory, issue.identifier);
       return {
         title: `Linked this workspace to ${issue.identifier}: ${issue.title}`,
         body: "Agents created in this workspace from now on get the issue as context.",
@@ -47,7 +46,7 @@ async function commandNote(input: CommandInput, deps: CommandDeps): Promise<Note
 
     case "file": {
       if (args === "") throw new Error("Usage: /file <title>, with an optional description on the following lines");
-      const project = await requireProject(deps, input.projectRoot);
+      const project = await connections.requireProject(input.projectRoot);
       const [firstLine = "", ...rest] = args.split("\n");
       const title = firstLine.trim().slice(0, MAX_TITLE);
       const overflow = firstLine.trim().slice(MAX_TITLE);
@@ -82,15 +81,12 @@ async function commandNote(input: CommandInput, deps: CommandDeps): Promise<Note
     }
 
     case "briefing": {
-      const project = await requireProject(deps, input.projectRoot);
-      const briefing = await client.callTool("get_briefing", {
-        project: project.identifier,
-        ...(args === "" ? {} : { since: args }),
-      });
+      const project = await connections.requireProject(input.projectRoot);
+      const since = args === "" ? undefined : args;
       return {
-        title: `${project.identifier} briefing${args === "" ? "" : ` since ${args}`}`,
-        body: briefing,
-        url: `${baseUrl.replace(/\/+$/, "")}/${project.identifier}/overview`,
+        title: `${project.identifier} briefing${since ? ` since ${since}` : ""}`,
+        body: await client.getBriefing(project.identifier, since),
+        url: projectWebUrl(baseUrl, project.identifier),
       };
     }
   }
@@ -100,13 +96,4 @@ async function requireLinkedIssue(directory: string): Promise<string> {
   const identifier = await readLinkedIssue(directory);
   if (!identifier) throw new Error("This workspace is not linked to a Lific issue. Use /issue MIO-23 first.");
   return identifier;
-}
-
-async function requireProject(deps: CommandDeps, projectRoot: string) {
-  const resolution = await deps.resolveProject(projectRoot);
-  if (resolution.kind === "resolved") return resolution.project;
-  if (resolution.kind === "conflict") {
-    throw new Error("This repository is bound to several Lific projects. Pick one in the Lific plugin settings.");
-  }
-  throw new Error("This repository is not bound to a Lific project. Run `lific bind` or pick one in settings.");
 }

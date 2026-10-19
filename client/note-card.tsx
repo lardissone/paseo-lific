@@ -1,11 +1,12 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { ExternalLink } from "@getpaseo/plugin/client/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { z } from "zod";
 import type { NoteSchema } from "../shared/note";
-import { countMarkdownBlocks, Markdown } from "./markdown";
+import { Markdown } from "./markdown";
+import { parseMarkdown } from "./markdown-parser";
 
 const COLLAPSED_BLOCKS = 10;
 
@@ -14,7 +15,8 @@ export function NoteCard({ theme, item }: PluginTimelineItemProps<z.output<typeo
   const [expanded, setExpanded] = useState(false);
   const accent =
     tone === "success" ? theme.colors.statusSuccess : tone === "warning" ? theme.colors.statusWarning : theme.colors.accent;
-  const long = body ? countMarkdownBlocks(body) > COLLAPSED_BLOCKS : false;
+  const blocks = useMemo(() => (body ? parseMarkdown(body) : []), [body]);
+  const long = blocks.length > COLLAPSED_BLOCKS;
 
   return (
     <View
@@ -34,7 +36,7 @@ export function NoteCard({ theme, item }: PluginTimelineItemProps<z.output<typeo
         <Text style={{ color: theme.colors.foreground, fontWeight: "600", flex: 1 }}>{title}</Text>
       </View>
       {body ? (
-        <Markdown theme={theme} source={body} maxBlocks={expanded ? undefined : COLLAPSED_BLOCKS} />
+        <Markdown theme={theme} blocks={blocks} maxBlocks={expanded ? undefined : COLLAPSED_BLOCKS} />
       ) : null}
       <View style={{ flexDirection: "row", gap: 12 }}>
         {long ? (
