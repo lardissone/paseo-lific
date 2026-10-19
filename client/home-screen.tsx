@@ -179,7 +179,7 @@ function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entrie
     <View style={{ gap: 10 }}>
       <SectionHeader theme={theme} icon="Bot" title="In progress" count={entries.length} />
       {entries.length === 0 ? (
-        <Message theme={theme}>No workspace is linked to an issue. Start work on one to see it here.</Message>
+        <Message theme={theme}>No agent is working on an open issue right now.</Message>
       ) : null}
       {entries.map((entry) => (
         <Card

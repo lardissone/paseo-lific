@@ -2,7 +2,11 @@
   "id": "lific",
   "name": "Lific",
   "description": "Start agent work from Lific issues, follow them from the workspace, and run Lific plans step by step.",
-  "media": [],
+  "media": [
+    "assets/home.jpg",
+    "assets/start-work.jpg",
+    "assets/run-plan.jpg"
+  ],
   "requirements": {
     "paseo": ">=0.12.0"
   }
