@@ -1,17 +1,18 @@
 {
   "name": "paseo-lific",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
-    "index.client.ts",
     "index.client.tsx",
     "index.server.ts",
-    "index.server.tsx",
     "client/",
     "server/",
-    "shared/"
+    "shared/",
+    "README.md",
+    "!**/*.test.ts",
+    "!server/fake-lific.ts"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -27,5 +28,6 @@
     "typescript": "^5.9.3",
     "vitest": "^5.0.5",
     "zod": "^4.4.3"
-  }
+  },
+  "description": "Start Paseo agent work from Lific issues, follow them from the workspace, and run Lific plans step by step."
 }

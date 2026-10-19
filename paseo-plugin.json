@@ -1,6 +1,7 @@
 {
   "id": "lific",
   "name": "Lific",
+  "description": "Start agent work from Lific issues, follow them from the workspace, and run Lific plans step by step.",
   "media": [],
   "requirements": {
     "paseo": ">=0.12.0"
