@@ -67,8 +67,8 @@ export function createHomeScreen(openScreen: OpenScreen) {
         {home.data?.configured ? (
           <View style={{ flexDirection: wide ? "row" : "column", gap: 24, alignItems: "flex-start" }}>
             <View style={{ flex: wide ? 1 : undefined, alignSelf: "stretch", gap: 24 }}>
-              <Plans theme={theme} runs={home.data.runs} onChanged={() => void home.refetch()} />
-              <InProgress theme={theme} entries={home.data.inProgress} navigation={navigation} />
+              <Plans theme={theme} runs={home.data.runs} activePlans={home.data.activePlans} onChanged={() => void home.refetch()} />
+              <InProgress theme={theme} home={home.data} navigation={navigation} />
               <NeedsYou theme={theme} issues={home.data.needsYou} />
               <Briefing theme={theme} projects={home.data.projects.map((p) => p.project.identifier)} />
             </View>
@@ -100,7 +100,7 @@ function Header({
   const ready = home?.configured ? readyCount(home) : 0;
   const summary = home?.configured
     ? [
-        plural(home.inProgress.length, "in progress", "in progress"),
+        plural(inProgressCount(home), "in progress", "in progress"),
         plural(home.needsYou.length, "needs you", "need you"),
         plural(ready, "ready to start", "ready to start"),
       ].join(" · ")
@@ -180,14 +180,15 @@ function StatusPill({ theme, status }: { theme: PluginTheme; status: IssueStatus
   );
 }
 
-function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entries: ConfiguredHome["inProgress"]; navigation: Navigation }) {
+function InProgress({ theme, home, navigation }: { theme: PluginTheme; home: ConfiguredHome; navigation: Navigation }) {
+  const { inProgress, activeWithoutWorkspace } = home;
   return (
     <View style={{ gap: 10 }}>
-      <SectionHeader theme={theme} icon="Bot" title="In progress" count={entries.length} />
-      {entries.length === 0 ? (
+      <SectionHeader theme={theme} icon="Bot" title="In progress" count={inProgressCount(home)} />
+      {inProgress.length === 0 && activeWithoutWorkspace.length === 0 ? (
         <Message theme={theme}>No agent is working on an open issue right now.</Message>
       ) : null}
-      {entries.map((entry) => (
+      {inProgress.map((entry) => (
         <Card
           key={entry.workspaceId}
           theme={theme}
@@ -203,6 +204,25 @@ function InProgress({ theme, entries, navigation }: { theme: PluginTheme; entrie
           </View>
         </Card>
       ))}
+      {activeWithoutWorkspace.length > 0 ? (
+        <Card theme={theme}>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>Active in Lific, no workspace linked</Text>
+          {activeWithoutWorkspace.map((issue) => (
+            <Pressable
+              key={issue.identifier}
+              accessibilityRole="link"
+              onPress={() => void openExternalUrl(issue.url)}
+              style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }}
+            >
+              <IssueLine
+                theme={theme}
+                issue={issue}
+                trailing={<Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{issue.projectName}</Text>}
+              />
+            </Pressable>
+          ))}
+        </Card>
+      ) : null}
     </View>
   );
 }
@@ -214,7 +234,17 @@ function runStatusText(run: ConfiguredHome["runs"][number]): string {
   return "Paused";
 }
 
-function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: ConfiguredHome["runs"]; onChanged(): void }) {
+function Plans({
+  theme,
+  runs,
+  activePlans,
+  onChanged,
+}: {
+  theme: PluginTheme;
+  runs: ConfiguredHome["runs"];
+  activePlans: ConfiguredHome["activePlans"];
+  onChanged(): void;
+}) {
   const control = useRpc(controlRun);
   const toast = useToast();
   const act = useMutation({
@@ -222,12 +252,12 @@ function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: Configure
     onSuccess: onChanged,
     onError: (error) => toast.error(errorMessage(error)),
   });
-  if (runs.length === 0) return null;
+  if (runs.length === 0 && activePlans.length === 0) return null;
   return (
     <View style={{ gap: 10 }}>
-      <SectionHeader theme={theme} icon="ListChecks" title="Plans" count={runs.length} />
+      <SectionHeader theme={theme} icon="ListChecks" title="Plans" count={runs.length + activePlans.length} />
       {runs.map((run) => {
-        const progress = run.stepCount === 0 ? 0 : run.doneCount / run.stepCount;
+        const progress = progressOf(run.doneCount, run.stepCount);
         const waiting = run.status === "paused";
         const target = { projectRoot: run.projectRoot, plan: run.plan };
         return (
@@ -240,15 +270,11 @@ function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: Configure
                 {run.plan} · {run.doneCount}/{run.stepCount}
               </Text>
             </View>
-            <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.surface2, overflow: "hidden" }}>
-              <View
-                style={{
-                  width: `${Math.round(progress * 100)}%`,
-                  height: 4,
-                  backgroundColor: run.status === "done" ? theme.colors.statusSuccess : theme.colors.accent,
-                }}
-              />
-            </View>
+            <ProgressBar
+              theme={theme}
+              progress={progress}
+              color={run.status === "done" ? theme.colors.statusSuccess : theme.colors.accent}
+            />
             <Text style={{ color: waiting ? theme.colors.statusWarning : theme.colors.foregroundMuted, fontSize: 12 }}>
               {runStatusText(run)}
               {run.mode === "review" && run.status === "running" ? " · pauses after each step" : ""}
@@ -270,8 +296,34 @@ function Plans({ theme, runs, onChanged }: { theme: PluginTheme; runs: Configure
           </Card>
         );
       })}
+      {activePlans.map((plan) => (
+        <Card key={plan.identifier} theme={theme} label={`Open ${plan.identifier} in Lific`} onPress={() => void openExternalUrl(plan.url)}>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+            <Text style={{ color: theme.colors.foreground, fontWeight: "600", flex: 1 }} numberOfLines={1}>
+              {plan.title}
+            </Text>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
+              {plan.identifier} · {plan.doneCount}/{plan.stepCount}
+            </Text>
+          </View>
+          <ProgressBar theme={theme} progress={progressOf(plan.doneCount, plan.stepCount)} color={theme.colors.accent} />
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>Active in Lific · not run from Paseo</Text>
+        </Card>
+      ))}
     </View>
   );
+}
+
+function ProgressBar({ theme, progress, color }: { theme: PluginTheme; progress: number; color: string }) {
+  return (
+    <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.surface2, overflow: "hidden" }}>
+      <View style={{ width: `${Math.round(progress * 100)}%`, height: 4, backgroundColor: color }} />
+    </View>
+  );
+}
+
+function progressOf(done: number, total: number): number {
+  return total === 0 ? 0 : done / total;
 }
 
 const REASONS: Record<ConfiguredHome["needsYou"][number]["reason"], string> = {
@@ -451,6 +503,10 @@ function Loading({ theme }: { theme: PluginTheme }) {
       <ActivityIndicator color={theme.colors.foregroundMuted} />
     </View>
   );
+}
+
+function inProgressCount(home: ConfiguredHome): number {
+  return home.inProgress.length + home.activeWithoutWorkspace.length;
 }
 
 function readyCount(home: ConfiguredHome): number {

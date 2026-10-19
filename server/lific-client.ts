@@ -166,11 +166,17 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       });
     },
 
-    listIssues(params: { projectId: number; workable?: boolean; limit?: number }): Promise<Issue[]> {
+    listIssues(params: { projectId: number; workable?: boolean; status?: IssueStatus; limit?: number }): Promise<Issue[]> {
       return call(
         z.array(IssueSchema),
         "GET",
-        `/issues${query({ project_id: params.projectId, workable: params.workable, limit: params.limit, order_by: "priority" })}`,
+        `/issues${query({
+          project_id: params.projectId,
+          workable: params.workable,
+          status: params.status,
+          limit: params.limit,
+          order_by: "priority",
+        })}`,
       );
     },
 

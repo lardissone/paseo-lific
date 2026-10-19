@@ -1,6 +1,6 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { errorMessage } from "../shared/errors";
-import { issueCard, type ProjectSummary } from "../shared/lific";
+import { issueCard, type ProjectSummary, resourceWebUrl } from "../shared/lific";
 import type { ConfiguredHome, Home } from "../shared/rpc";
 import type { Connections } from "./connection";
 import { readLinkedIssue, repositoryRoot } from "./git";
@@ -73,27 +73,54 @@ export async function loadHome(connections: Connections, paseo: PaseoApi): Promi
   );
 
   const linkedProjects = lificProjects.filter((project) => rootsByProject.has(project.id));
-  const projects = await Promise.all(
-    linkedProjects.map(async (project: ProjectSummary) => {
-      const issues = await client.listIssues({ projectId: project.id, workable: true, limit: 50 });
-      const ready = issues
-        .filter((issue) => issue.status !== "active" && !issue.needs_human && !busy.has(issue.identifier))
-        .slice(0, READY_PER_PROJECT)
-        .map((issue) => issueCard(baseUrl, issue));
-      return { project, projectRoot: rootsByProject.get(project.id)!, ready };
-    }),
-  );
+  const [projects, runs] = await Promise.all([
+    Promise.all(
+      linkedProjects.map(async (project: ProjectSummary) => {
+        const [workable, active, plans] = await Promise.all([
+          client.listIssues({ projectId: project.id, workable: true, limit: 50 }),
+          client.listIssues({ projectId: project.id, status: "active", limit: 50 }),
+          client.listPlans(project.id),
+        ]);
+        const ready = workable
+          .filter((issue) => issue.status !== "active" && !issue.needs_human && !busy.has(issue.identifier))
+          .slice(0, READY_PER_PROJECT)
+          .map((issue) => issueCard(baseUrl, issue));
+        return { project, projectRoot: rootsByProject.get(project.id)!, ready, active, plans };
+      }),
+    ),
+    Promise.all([...new Set(rootsByProject.values())].map((root) => loadRuns(client, root))).then((lists) => lists.flat()),
+  ]);
 
-  const runs = (
-    await Promise.all([...new Set(rootsByProject.values())].map((root) => loadRuns(client, root)))
-  ).flat();
+  // Work started outside Paseo, such as an agent picking issues over MCP, has no workspace link or plan run.
+  const activeWithoutWorkspace = projects.flatMap(({ project, active }) =>
+    active
+      .filter((issue) => !busy.has(issue.identifier) && !seen.has(issue.identifier))
+      .map((issue) => ({ ...issueCard(baseUrl, issue), projectName: project.name })),
+  );
+  const runPlans = new Set(runs.map((run) => run.plan));
+  const activePlans = projects.flatMap(({ project, plans }) =>
+    plans
+      .filter((plan) => plan.status === "active" && !runPlans.has(plan.identifier))
+      .map((plan) => ({
+        identifier: plan.identifier,
+        title: plan.title,
+        projectName: project.name,
+        doneCount: plan.done_count,
+        stepCount: plan.step_count,
+        url: resourceWebUrl(baseUrl, plan.identifier, "plans", plan.id),
+      })),
+  );
 
   return {
     configured: true,
     runs,
     inProgress,
+    activeWithoutWorkspace,
+    activePlans,
     needsYou,
-    projects: projects.filter((entry) => entry.ready.length > 0),
+    projects: projects
+      .filter((entry) => entry.ready.length > 0)
+      .map(({ project, projectRoot, ready }) => ({ project, projectRoot, ready })),
     unlinkedProjects: lificProjects.filter((project) => !rootsByProject.has(project.id)),
   };
 }

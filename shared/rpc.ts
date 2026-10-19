@@ -224,6 +224,16 @@ export const RunSummarySchema = z.object({
 });
 export type RunSummary = z.output<typeof RunSummarySchema>;
 
+export const ActivePlanSchema = z.object({
+  identifier: z.string(),
+  title: z.string(),
+  projectName: z.string(),
+  doneCount: z.number(),
+  stepCount: z.number(),
+  url: z.string(),
+});
+export type ActivePlan = z.output<typeof ActivePlanSchema>;
+
 export const HomeSchema = z.discriminatedUnion("configured", [
   z.object({ configured: z.literal(false) }),
   z.object({
@@ -243,6 +253,10 @@ export const HomeSchema = z.discriminatedUnion("configured", [
   ),
   unlinkedProjects: z.array(ProjectSummarySchema),
   runs: z.array(RunSummarySchema),
+  /** Active issues in linked projects with no Paseo workspace linked to them, such as work an agent picked up over MCP. */
+  activeWithoutWorkspace: z.array(IssueCardSchema.extend({ projectName: z.string() })),
+  /** Active plans in linked projects that no plan run drives. */
+  activePlans: z.array(ActivePlanSchema),
   }),
 ]);
 export type Home = z.output<typeof HomeSchema>;
