@@ -66,15 +66,17 @@ export function nextRunAction(
   const index = leaves.findIndex((leaf) => !leaf.finished);
   if (index === -1) return { kind: "done" };
   const leaf = leaves[index]!;
-  if (!leaf.issue) return { kind: "create-issue", leaf };
-  if (leaf.cancelled) return { kind: "pause", pause: { kind: "cancelled", issue: leaf.issue } };
-  if (branchOf(leaf.issue)) return { kind: "wait" };
+  if (leaf.issue && leaf.cancelled) return { kind: "pause", pause: { kind: "cancelled", issue: leaf.issue } };
+  if (leaf.issue && branchOf(leaf.issue)) return { kind: "wait" };
 
   const previousIssue = index > 0 ? leaves[index - 1]!.issue : null;
   const previous = previousIssue ? { issue: previousIssue, branch: branchOf(previousIssue) } : null;
+  // The review gate comes before creating the next step's issue, so that issue does not show up
+  // as ready to start while the run waits for the person.
   if (run.mode === "review" && previous && run.approved !== previous.issue) {
     return { kind: "pause", pause: { kind: "review", issue: previous.issue } };
   }
+  if (!leaf.issue) return { kind: "create-issue", leaf };
   const baseBranch = run.branching === "stacked" && previous?.branch ? previous.branch : run.base;
   return { kind: "start", issue: leaf.issue, index, baseBranch, previous };
 }

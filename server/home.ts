@@ -11,6 +11,7 @@ import { listRuns } from "./run-store";
 type PaseoApi = PluginHandlerContext["paseo"];
 
 const READY_PER_PROJECT = 8;
+const CLOSED = new Set(["done", "cancelled"]);
 
 const NO_ATTENTION = { assigned: [], human: [], waiting: [] };
 
@@ -58,7 +59,8 @@ export async function loadHome(connections: Connections, paseo: PaseoApi): Promi
       };
     }),
   );
-  const inProgress = linked.filter((entry) => entry !== null);
+  // A workspace whose issue is closed is finished work, not work in progress.
+  const inProgress = linked.flatMap((entry) => (entry && !CLOSED.has(entry.issue.status) ? [entry] : []));
   const busy = new Set(inProgress.map((entry) => entry.issue.identifier));
 
   const seen = new Set<string>();

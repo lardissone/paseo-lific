@@ -73,6 +73,14 @@ describe("nextRunAction", () => {
     expect(nextRunAction(leaves, { ...review, approved: "MIO-1" }, branchOf)).toMatchObject({ kind: "start" });
   });
 
+  it("pauses for review before creating the next step's issue", () => {
+    const leaves = [leaf("MIO-1", { finished: true }), leaf(null)];
+    expect(nextRunAction(leaves, { ...run, mode: "review" }, branchOf)).toEqual({
+      kind: "pause",
+      pause: { kind: "review", issue: "MIO-1" },
+    });
+  });
+
   it("creates missing issues, pauses on cancelled ones, and finishes", () => {
     expect(nextRunAction([leaf(null)], run, branchOf)).toMatchObject({ kind: "create-issue" });
     expect(nextRunAction([leaf("MIO-3", { cancelled: true })], run, branchOf)).toEqual({
