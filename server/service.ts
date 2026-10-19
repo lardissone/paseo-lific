@@ -1,10 +1,11 @@
 import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
-import { type Issue, type IssueStatus, issueWebUrl } from "../shared/lific";
+import { type IssueStatus, issueWebUrl } from "../shared/lific";
 import type { ProjectResolution } from "../shared/rpc";
 import { isConfigured, type LificSettings, lificSettings } from "../shared/settings";
 import { gitOptional, readLinkedIssue, writeLinkedIssue, clearLinkedIssue } from "./git";
+import { searchAttachments } from "./attachments";
 import { buildIssueInstructions } from "./issue-prompt";
-import { createLificClient, type LificClient, LificError } from "./lific-client";
+import { createLificClient, type LificClient } from "./lific-client";
 import { computeRepoAliases } from "./repo-identity";
 
 type PaseoApi = PluginHandlerContext["paseo"];
@@ -35,21 +36,6 @@ export function createLificService(settingsHandle: SettingsHandle) {
     };
   }
 
-  /** Writes with `expected_seq`; on a conflict, re-reads the issue and applies the change once more. */
-  async function updateIssue(
-    client: LificClient,
-    identifier: string,
-    changes: { status?: IssueStatus; assignees?: string[] },
-  ): Promise<Issue> {
-    const issue = await client.getIssue(identifier);
-    try {
-      return await client.updateIssue(issue, changes);
-    } catch (error) {
-      if (!(error instanceof LificError) || error.status !== 409) throw error;
-      return client.updateIssue(await client.getIssue(identifier), changes);
-    }
-  }
-
   async function resolveProject(projectRoot: string): Promise<ProjectResolution> {
     const current = await settings();
     if (!isConfigured(current)) return { kind: "unconfigured" };
@@ -75,6 +61,12 @@ export function createLificService(settingsHandle: SettingsHandle) {
   }
 
   return {
+    /** The configured client, or null when the plugin has no URL or API key yet. */
+    async connection(): Promise<{ client: LificClient; settings: LificSettings } | null> {
+      const current = await settings();
+      return isConfigured(current) ? connect() : null;
+    },
+
     async checkConnection() {
       try {
         const { client } = await connect();
@@ -141,7 +133,7 @@ export function createLificService(settingsHandle: SettingsHandle) {
 
     async setStatus(identifier: string, status: IssueStatus) {
       const { client } = await connect();
-      await updateIssue(client, identifier, { status });
+      await client.updateIssueByIdentifier(identifier, { status });
       return {};
     },
 
@@ -149,6 +141,11 @@ export function createLificService(settingsHandle: SettingsHandle) {
       const { client } = await connect();
       await client.addComment(await client.getIssue(identifier), content);
       return {};
+    },
+
+    async searchAttachments(query: string) {
+      const { client, settings: current } = await connect();
+      return { items: await searchAttachments(client, current.baseUrl, query) };
     },
 
     async listBranches(projectRoot: string) {
@@ -199,7 +196,7 @@ export function createLificService(settingsHandle: SettingsHandle) {
         prompt: `Work on Lific issue ${issue.identifier}: ${issue.title}. The issue details are in your instructions.`,
       });
 
-      const started = issue.status === "active" ? issue : await updateIssue(client, issue.identifier, { status: "active" });
+      const started = issue.status === "active" ? issue : await client.updateIssueByIdentifier(issue.identifier, { status: "active" });
       await client.addComment(
         started,
         `Started in Paseo on branch \`${input.branchName}\` from \`${input.baseBranch}\` (${input.provider}).`,

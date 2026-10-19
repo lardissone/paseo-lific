@@ -7,6 +7,7 @@ import { ScrollView, Text, View } from "react-native";
 import { ISSUE_STATUSES, type IssueStatus } from "../shared/lific";
 import { addIssueComment, getWorkspaceIssue, linkWorkspaceIssue, setIssueStatus } from "../shared/rpc";
 import { Button, Chip, Message, Section, errorText } from "./kit";
+import { Markdown } from "./markdown";
 
 const REFRESH_MS = 30_000;
 
@@ -195,9 +196,11 @@ function LinkedIssue({
       </View>
 
       <Section theme={theme} title="Description">
-        <Text selectable style={text}>
-          {issue.description.trim() || "No description."}
-        </Text>
+        {issue.description.trim() ? (
+          <Markdown theme={theme} source={issue.description} />
+        ) : (
+          <Message theme={theme}>No description.</Message>
+        )}
       </Section>
 
       <Section theme={theme} title="Recent comments">
@@ -210,9 +213,7 @@ function LinkedIssue({
             <Text style={muted}>
               {entry.author_display_name || entry.author} · {new Date(entry.created_at).toLocaleString()}
             </Text>
-            <Text selectable style={text}>
-              {entry.content}
-            </Text>
+            <Markdown theme={theme} source={entry.content} />
           </View>
         ))}
         <TextInput

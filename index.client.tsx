@@ -3,6 +3,17 @@ import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { IssuePanel } from "./client/issue-panel";
 import { LificSettingsScreen } from "./client/settings-screen";
 import { StartWorkScreen } from "./client/start-work-screen";
+import { NoteCard } from "./client/note-card";
+import { NOTE_KIND, NOTE_VERSION, NoteSchema } from "./shared/note";
+import { lificAttachments, runSlashCommand, type SlashCommand } from "./shared/rpc";
+
+const SLASH_COMMANDS: { name: SlashCommand; description: string; argumentHint: string }[] = [
+  { name: "issue", description: "Link this workspace to a Lific issue", argumentHint: "MIO-23" },
+  { name: "file", description: "File a Lific issue in this project's backlog", argumentHint: "<title>" },
+  { name: "done", description: "Mark the linked Lific issue done", argumentHint: "[summary comment]" },
+  { name: "block", description: "Put the linked Lific issue on a person", argumentHint: "<what you are waiting for>" },
+  { name: "briefing", description: "Show the Lific project briefing", argumentHint: "[since, e.g. 2026-10-01]" },
+];
 
 function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
   return (
@@ -17,6 +28,23 @@ function LificSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps)
 export default function contribute(client: PluginClientContext) {
   client.addScreen({ id: "start", title: "Start work from Lific", Component: StartWorkScreen });
   client.addSidebarHeaderItem({ id: "start", title: "Lific", Component: LificSidebarItem });
+  client.addAttachmentSource(lificAttachments);
+  client.addTimelineRenderer({ kind: NOTE_KIND, version: NOTE_VERSION, schema: NoteSchema, Component: NoteCard });
+  for (const command of SLASH_COMMANDS) {
+    client.addSlashCommand({
+      ...command,
+      context: "agent",
+      async onSubmit({ args, agent, workspace, rpc }) {
+        await rpc(runSlashCommand, {
+          command: command.name,
+          args,
+          agentId: agent.id,
+          directory: workspace.directory,
+          projectRoot: workspace.projectRootPath,
+        });
+      },
+    });
+  }
   client.addSettingsScreen({ id: "lific", title: "Lific", icon: "SquareKanban", Component: LificSettingsScreen });
   client.addWorkspacePanel({
     id: "issue",

@@ -6,9 +6,21 @@ Lific is a local-first issue tracker. This plugin lets you start agent work from
 - **Issue context for agents.** Every agent created in a linked workspace gets the issue title, description, labels, blockers, and the last three comments in its system prompt, plus instructions to close the issue with a summary when done.
 - **Issue panel.** A workspace panel shows the linked issue, its status, description, and recent comments. You can change the status, comment, open it in Lific, link a different issue, or unlink it.
 
+- **Attach from Lific.** The composer attachment menu searches issues and pages, and accepts IDs like `MIO-23`, `MIO-DOC-4`, or `MIO-PLAN-2`. The selected item is attached as a text snapshot.
+- **Slash commands** in an agent's composer. Each one reports its result as a card in the agent's timeline:
+  - `/issue MIO-23` links the workspace to an issue.
+  - `/file <title>` files an issue in the project's backlog. Lines after the first become the description.
+  - `/done [summary]` marks the linked issue done, with an optional comment.
+  - `/block <reason>` comments the reason and puts the issue on a person.
+  - `/briefing [since]` shows the project briefing.
+- **Lifecycle updates** on the linked issue, kept to state changes a person needs to see:
+  - When an agent asks you a question, the question is commented on the issue and the issue is put on a person. When every question is answered, the previous assignees come back.
+  - When agent turns start failing, one comment with the error. It reports again only after a turn succeeds.
+  - When the workspace is archived while the issue is still active, the issue moves back to todo with a comment.
+
 ## How linking works
 
-The link between a workspace and an issue is stored in the repository's local git config (`branch.<name>.lificIssue`). It is shared by every worktree of the repository, follows branch renames, and is never pushed. Branch names default to the issue title only, so Lific identifiers stay out of the shared repository. With the private tracker setting on, agents are also told not to mention Lific identifiers or links in commits and pull requests.
+The link between a workspace and an issue is stored in the repository's local git config (`branch.<name>.lificIssue`), together with the small amount of state the lifecycle updates need. It is shared by every worktree of the repository, follows branch renames, and is never pushed. Branch names default to the issue title only, so Lific identifiers stay out of the shared repository. With the private tracker setting on, agents are also told not to mention Lific identifiers or links in commits and pull requests.
 
 ## Setup
 

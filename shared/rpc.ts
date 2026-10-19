@@ -1,4 +1,4 @@
-import { defineRpc } from "@getpaseo/plugin";
+import { defineAttachmentSource, defineRpc, PluginAttachmentSearchPayloadSchema } from "@getpaseo/plugin";
 import { z } from "zod";
 import { CommentSchema, IssueSchema, IssueStatusSchema, ProjectSummarySchema } from "./lific";
 
@@ -90,4 +90,34 @@ export const startWork = defineRpc({
     provider: z.string().min(1),
   }),
   output: z.object({ workspaceId: z.string(), agentId: z.string() }),
+});
+
+export const searchAttachments = defineRpc({
+  name: "lific.attachments.search",
+  input: z.object({ query: z.string() }),
+  output: PluginAttachmentSearchPayloadSchema,
+});
+
+export const lificAttachments = defineAttachmentSource({
+  id: "lific",
+  title: "Lific issue, page, or plan",
+  icon: "SquareKanban",
+  pickerTitle: "Attach from Lific",
+  searchPlaceholder: "Search, or type MIO-23, MIO-DOC-4, MIO-PLAN-2",
+  search: searchAttachments,
+});
+
+export const SlashCommandSchema = z.enum(["issue", "file", "done", "block", "briefing"]);
+export type SlashCommand = z.output<typeof SlashCommandSchema>;
+
+export const runSlashCommand = defineRpc({
+  name: "lific.command.run",
+  input: z.object({
+    command: SlashCommandSchema,
+    args: z.string(),
+    agentId: z.string(),
+    directory: z.string(),
+    projectRoot: z.string(),
+  }),
+  output: z.object({}),
 });

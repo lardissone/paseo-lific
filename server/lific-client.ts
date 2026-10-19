@@ -4,6 +4,10 @@ import {
   CommentSchema,
   type Issue,
   IssueSchema,
+  type Page,
+  PageSchema,
+  type Plan,
+  PlanSchema,
   type IssueStatus,
   type ProjectSummary,
   ProjectSummarySchema,
@@ -27,6 +31,16 @@ const ResolutionSchema = z.discriminatedUnion("resolution", [
   z.object({ resolution: z.literal("conflict"), projects: z.array(ProjectSummarySchema) }),
 ]);
 export type RepoResolution = z.output<typeof ResolutionSchema>;
+
+const ToolResponseSchema = z.object({
+  result: z
+    .object({
+      content: z.array(z.object({ type: z.string(), text: z.string().optional() })),
+      isError: z.boolean().optional(),
+    })
+    .optional(),
+  error: z.object({ message: z.string() }).optional(),
+});
 
 interface LificClientOptions {
   baseUrl: string;
@@ -82,6 +96,44 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       return call(z.array(ProjectSummarySchema), "GET", "/projects");
     },
 
+    createIssue(params: { projectId: number; title: string; description: string }): Promise<Issue> {
+      return call(IssueSchema, "POST", "/issues", {
+        project_id: params.projectId,
+        title: params.title,
+        description: params.description,
+        status: "backlog",
+      });
+    },
+
+    /**
+     * Calls a Lific MCP tool over `POST /mcp`. Lific serves MCP statelessly with JSON responses,
+     * so a single `tools/call` needs no session. Used for tools with no REST equivalent.
+     */
+    async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+      let response: Response;
+      try {
+        response = await request(`${baseUrl.replace(/\/+$/, "")}/mcp`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            Accept: "application/json, text/event-stream",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+        });
+      } catch (error) {
+        throw new LificError(`Cannot reach Lific at ${baseUrl}: ${String(error)}`, 0);
+      }
+      if (!response.ok) throw new LificError(`Lific MCP ${name} failed (${response.status})`, response.status);
+      const envelope = ToolResponseSchema.parse(await response.json());
+      if (envelope.error) throw new LificError(`Lific MCP ${name} failed: ${envelope.error.message}`, 200);
+      const text = envelope.result?.content
+        .flatMap((part) => (part.type === "text" && part.text ? [part.text] : []))
+        .join("\n");
+      if (envelope.result?.isError) throw new LificError(text || `Lific MCP ${name} failed`, 200);
+      return text ?? "";
+    },
+
     resolveRepo(aliases: RepoAlias[]): Promise<RepoResolution> {
       return call(ResolutionSchema, "POST", "/repos/resolve", { aliases });
     },
@@ -107,6 +159,26 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       );
     },
 
+    getPage(id: number): Promise<Page> {
+      return call(PageSchema, "GET", `/pages/${id}`);
+    },
+
+    resolvePage(identifier: string): Promise<Page> {
+      return call(PageSchema, "GET", `/pages/resolve/${encodeURIComponent(identifier)}`);
+    },
+
+    resolvePlan(identifier: string): Promise<Plan> {
+      return call(PlanSchema, "GET", `/plans/resolve/${encodeURIComponent(identifier)}`);
+    },
+
+    search(params: { query: string; limit: number }): Promise<{ result_type: string; id: number; identifier: string | null }[]> {
+      return call(
+        z.array(z.object({ result_type: z.string(), id: z.number(), identifier: z.string().nullable() })),
+        "GET",
+        `/search${query({ query: params.query, limit: params.limit })}`,
+      );
+    },
+
     async searchIssues(params: {
       query: string;
       projectId?: number;
@@ -124,6 +196,19 @@ export function createLificClient({ baseUrl, apiKey, request = fetch }: LificCli
       changes: { status?: IssueStatus; assignees?: string[] },
     ): Promise<Issue> {
       return call(IssueSchema, "PUT", `/issues/${issue.id}`, { ...changes, expected_seq: issue.seq });
+    },
+
+    /** Writes with `expected_seq`; on a conflict, re-reads the issue and applies the change once more. */
+    async updateIssueByIdentifier(
+      identifier: string,
+      changes: { status?: IssueStatus; assignees?: string[] },
+    ): Promise<Issue> {
+      try {
+        return await this.updateIssue(await this.getIssue(identifier), changes);
+      } catch (error) {
+        if (!(error instanceof LificError) || error.status !== 409) throw error;
+        return this.updateIssue(await this.getIssue(identifier), changes);
+      }
     },
 
     listRecentComments(issue: Issue, limit: number): Promise<Comment[]> {

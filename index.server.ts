@@ -7,10 +7,14 @@ import {
   listBranches,
   listIssues,
   resolveProject,
+  runSlashCommand,
+  searchAttachments,
   setIssueStatus,
   startWork,
 } from "./shared/rpc";
 import { lificSettings } from "./shared/settings";
+import { runSlashCommand as runCommand } from "./server/commands";
+import { createLifecycleReporter } from "./server/lifecycle";
 import { createLificService } from "./server/service";
 
 export default function contribute(server: PluginServerContext) {
@@ -26,6 +30,18 @@ export default function contribute(server: PluginServerContext) {
   server.handle(setIssueStatus, ({ identifier, status }) => lific.setStatus(identifier, status));
   server.handle(addIssueComment, ({ identifier, content }) => lific.addComment(identifier, content));
   server.handle(listBranches, ({ projectRoot }) => lific.listBranches(projectRoot));
+  server.handle(searchAttachments, ({ query }) => lific.searchAttachments(query));
+  server.handle(runSlashCommand, async (input, { paseo }) => {
+    await runCommand(input, paseo, {
+      connect: async () => {
+        const connection = await lific.connection();
+        if (!connection) throw new Error("Lific is not configured. Add the URL and API key in the plugin settings.");
+        return { client: connection.client, baseUrl: connection.settings.baseUrl };
+      },
+      resolveProject: lific.resolveProject,
+    });
+    return {};
+  });
   server.handle(startWork, (input, { paseo }) => lific.startWork(input, paseo));
 
   server.before("agent.create", async ({ request }) => {
@@ -43,6 +59,20 @@ export default function contribute(server: PluginServerContext) {
       ? `${request.config.systemPrompt}\n\n${instructions}`
       : instructions;
     return { ...request, config: { ...request.config, systemPrompt } };
+  });
+
+  const reporter = createLifecycleReporter(() => lific.connection());
+  server.on("agent.permission_requested", ({ agent, request }) => {
+    if (request.kind === "question") void reporter.questionAsked(agent.cwd, request);
+  });
+  server.on("agent.permission_resolved", ({ agent, requestId }) => {
+    void reporter.questionResolved(agent.cwd, requestId);
+  });
+  server.on("agent.turn_ended", ({ agent, outcome }) => {
+    void reporter.turnEnded(agent.cwd, outcome);
+  });
+  server.on("workspace.archived", ({ workspace }, { paseo }) => {
+    void reporter.workspaceArchived(workspace, paseo);
   });
 
   return () => {};
