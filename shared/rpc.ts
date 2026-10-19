@@ -181,7 +181,22 @@ export const getPlanPreview = defineRpc({
   name: "lific.plans.preview",
   input: z.object({ identifier: z.string() }),
   output: z.object({
-    steps: z.array(z.object({ depth: z.number(), title: z.string(), issue: z.string().nullable(), done: z.boolean() })),
+    title: z.string(),
+    status: z.string(),
+    url: z.string(),
+    doneCount: z.number(),
+    stepCount: z.number(),
+    steps: z.array(
+      z.object({
+        depth: z.number(),
+        title: z.string(),
+        issue: z.string().nullable(),
+        /** Status of the step's issue, or null when the step has no issue yet. */
+        issueStatus: IssueStatusSchema.nullable(),
+        issueUrl: z.string().nullable(),
+        done: z.boolean(),
+      }),
+    ),
   }),
 });
 
@@ -226,13 +241,12 @@ export type RunSummary = z.output<typeof RunSummarySchema>;
 
 export const ActivePlanSchema = z.object({
   identifier: z.string(),
+  projectRoot: z.string(),
   title: z.string(),
   projectName: z.string(),
   doneCount: z.number(),
   stepCount: z.number(),
-  url: z.string(),
 });
-export type ActivePlan = z.output<typeof ActivePlanSchema>;
 
 export const HomeSchema = z.discriminatedUnion("configured", [
   z.object({ configured: z.literal(false) }),

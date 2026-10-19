@@ -35,6 +35,7 @@ export function createHomeScreen(openScreen: OpenScreen) {
       if (home.dataUpdatedAt) void queryClient.invalidateQueries({ queryKey: ATTENTION_QUERY_KEY });
     }, [home.dataUpdatedAt, queryClient]);
     const startWork = (params: Record<string, string>) => openScreen({ screenId: "start", params });
+    const openPlan = (params: { projectRoot: string; plan: string }) => openScreen({ screenId: "plan-detail", params });
     const wide = !layout.compact;
 
     return (
@@ -67,7 +68,13 @@ export function createHomeScreen(openScreen: OpenScreen) {
         {home.data?.configured ? (
           <View style={{ flexDirection: wide ? "row" : "column", gap: 24, alignItems: "flex-start" }}>
             <View style={{ flex: wide ? 1 : undefined, alignSelf: "stretch", gap: 24 }}>
-              <Plans theme={theme} runs={home.data.runs} activePlans={home.data.activePlans} onChanged={() => void home.refetch()} />
+              <Plans
+                theme={theme}
+                runs={home.data.runs}
+                activePlans={home.data.activePlans}
+                onOpen={openPlan}
+                onChanged={() => void home.refetch()}
+              />
               <InProgress theme={theme} home={home.data} navigation={navigation} />
               <NeedsYou theme={theme} issues={home.data.needsYou} />
               <Briefing theme={theme} projects={home.data.projects.map((p) => p.project.identifier)} />
@@ -238,11 +245,13 @@ function Plans({
   theme,
   runs,
   activePlans,
+  onOpen,
   onChanged,
 }: {
   theme: PluginTheme;
   runs: ConfiguredHome["runs"];
   activePlans: ConfiguredHome["activePlans"];
+  onOpen(params: { projectRoot: string; plan: string }): void;
   onChanged(): void;
 }) {
   const control = useRpc(controlRun);
@@ -261,7 +270,7 @@ function Plans({
         const waiting = run.status === "paused";
         const target = { projectRoot: run.projectRoot, plan: run.plan };
         return (
-          <Card key={`${run.projectRoot}:${run.plan}`} theme={theme}>
+          <Card key={`${run.projectRoot}:${run.plan}`} theme={theme} label={`Open ${run.plan}`} onPress={() => onOpen(target)}>
             <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
               <Text style={{ color: theme.colors.foreground, fontWeight: "600", flex: 1 }} numberOfLines={1}>
                 {run.title}
@@ -297,7 +306,12 @@ function Plans({
         );
       })}
       {activePlans.map((plan) => (
-        <Card key={plan.identifier} theme={theme} label={`Open ${plan.identifier} in Lific`} onPress={() => void openExternalUrl(plan.url)}>
+        <Card
+          key={plan.identifier}
+          theme={theme}
+          label={`Open ${plan.identifier}`}
+          onPress={() => onOpen({ projectRoot: plan.projectRoot, plan: plan.identifier })}
+        >
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
             <Text style={{ color: theme.colors.foreground, fontWeight: "600", flex: 1 }} numberOfLines={1}>
               {plan.title}
@@ -375,19 +389,68 @@ function ReadyToStart({
   onStart(params: Record<string, string>): void;
 }) {
   const total = readyCount(home);
+  const { values, patch } = useLificSettings();
+  const collapsed = new Set(values?.collapsedProjects ?? []);
+  function toggle(identifier: string) {
+    const next = new Set(collapsed);
+    if (!next.delete(identifier)) next.add(identifier);
+    void patch({ collapsedProjects: [...next] });
+  }
   return (
     <View style={{ gap: 10 }}>
       <SectionHeader theme={theme} icon="Sparkles" title="Ready to start" count={total} />
       {home.projects.length === 0 ? (
         <Message theme={theme}>No workable issues in the Lific projects linked to your repositories.</Message>
       ) : null}
-      {home.projects.map(({ project, projectRoot, ready }) => (
-        <Card key={project.id} theme={theme}>
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
-            <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>{project.name}</Text>
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{project.identifier}</Text>
-          </View>
-          {ready.map((issue) => (
+      {home.projects.map((entry) => (
+        <ReadyProject
+          key={entry.project.id}
+          theme={theme}
+          entry={entry}
+          open={!collapsed.has(entry.project.identifier)}
+          onToggle={() => toggle(entry.project.identifier)}
+          onStart={onStart}
+        />
+      ))}
+      {home.unlinkedProjects.length > 0 ? (
+        <Message theme={theme}>
+          Not linked to a repository here: {home.unlinkedProjects.map((p) => p.identifier).join(", ")}. Run `lific bind`
+          in a repository or pick a project in settings to start work on their issues.
+        </Message>
+      ) : null}
+    </View>
+  );
+}
+
+function ReadyProject({
+  theme,
+  entry: { project, projectRoot, ready },
+  open,
+  onToggle,
+  onStart,
+}: {
+  theme: PluginTheme;
+  entry: ConfiguredHome["projects"][number];
+  open: boolean;
+  onToggle(): void;
+  onStart(params: Record<string, string>): void;
+}) {
+  return (
+    <Card theme={theme}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`${open ? "Collapse" : "Expand"} ${project.name}`}
+        onPress={onToggle}
+        style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 }}
+      >
+        <Icon name={open ? "ChevronDown" : "ChevronRight"} size={14} color={theme.colors.foregroundMuted} />
+        <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>{project.name}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, flex: 1 }}>{project.identifier}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{ready.length}</Text>
+      </Pressable>
+      {open
+        ? ready.map((issue) => (
             <View key={issue.identifier} style={{ paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
               <IssueLine
                 theme={theme}
@@ -404,16 +467,9 @@ function ReadyToStart({
                 }
               />
             </View>
-          ))}
-        </Card>
-      ))}
-      {home.unlinkedProjects.length > 0 ? (
-        <Message theme={theme}>
-          Not linked to a repository here: {home.unlinkedProjects.map((p) => p.identifier).join(", ")}. Run `lific bind`
-          in a repository or pick a project in settings to start work on their issues.
-        </Message>
-      ) : null}
-    </View>
+          ))
+        : null}
+    </Card>
   );
 }
 

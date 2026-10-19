@@ -22,6 +22,8 @@ export const lificSettings = defineSettings({
     lastBaseBranch: z.record(z.string(), z.string()).default({}),
     /** Lific project identifier → when its briefing was last shown, for "since last time". */
     briefingSeenAt: z.record(z.string(), z.string()).default({}),
+    /** Lific project identifiers collapsed in the home's Ready to start list. */
+    collapsedProjects: z.array(z.string()).default([]),
   }),
 });
 

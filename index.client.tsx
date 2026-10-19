@@ -3,6 +3,7 @@ import { createHomeScreen } from "./client/home-screen";
 import { IssuePanel } from "./client/issue-panel";
 import { MentionsRow } from "./client/mentions-row";
 import { NoteCard } from "./client/note-card";
+import { createPlanScreen } from "./client/plan-screen";
 import { createRunPlanScreen } from "./client/run-plan-screen";
 import { LificSettingsScreen } from "./client/settings-screen";
 import { LificSidebarItem } from "./client/sidebar-item";
@@ -31,6 +32,7 @@ export default function contribute(client: PluginClientContext) {
   client.addScreen({ id: "home", title: "Lific", Component: createHomeScreen(client.openScreen) });
   client.addScreen({ id: "plan", title: "Run a plan", Component: createRunPlanScreen(client.openScreen) });
   client.addScreen({ id: "start", title: "Start work from Lific", Component: StartWorkScreen });
+  client.addScreen({ id: "plan-detail", title: "Lific plan", Component: createPlanScreen(client.openScreen) });
   client.addSidebarHeaderItem({ id: "home", title: "Lific", Component: LificSidebarItem });
   client.addSettingsScreen({ id: "lific", title: "Lific", icon: "SquareKanban", Component: LificSettingsScreen });
   client.addWorkspacePanel({

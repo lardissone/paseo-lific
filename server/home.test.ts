@@ -129,11 +129,11 @@ describe("home", () => {
     expect(home.activePlans).toEqual([
       {
         identifier: "MEM-PLAN-1",
+        projectRoot: repo,
         title: "Title of MEM-PLAN-1",
         projectName: "Memento",
         doneCount: 1,
         stepCount: 4,
-        url: "https://lific.test/MEM/plans/1",
       },
     ]);
   });

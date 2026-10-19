@@ -1,5 +1,6 @@
+import { IssueStatusSchema, issueWebUrl, resourceWebUrl } from "../shared/lific";
 import type { Connections } from "./connection";
-import { flattenSteps, stepFinished } from "./plan-steps";
+import { flattenSteps, stepFinished, subtreeFinished } from "./plan-steps";
 
 export async function listPlans(connections: Connections, projectRoot: string) {
   const { client } = await connections.require();
@@ -17,14 +18,24 @@ export async function listPlans(connections: Connections, projectRoot: string) {
 }
 
 export async function planPreview(connections: Connections, identifier: string) {
-  const { client } = await connections.require();
+  const { client, settings } = await connections.require();
   const plan = await client.resolvePlan(identifier);
   return {
-    steps: flattenSteps(plan.steps).map(({ step, depth }) => ({
-      depth,
-      title: step.title,
-      issue: step.issue_identifier ?? null,
-      done: stepFinished(step),
-    })),
+    title: plan.title,
+    status: plan.status,
+    url: resourceWebUrl(settings.baseUrl, plan.identifier, "plans", plan.id),
+    doneCount: plan.done_count,
+    stepCount: plan.step_count,
+    steps: flattenSteps(plan.steps).map(({ step, depth }) => {
+      const issue = step.issue_identifier ?? null;
+      return {
+        depth,
+        title: step.title,
+        issue,
+        issueStatus: IssueStatusSchema.safeParse(step.issue_status).data ?? null,
+        issueUrl: issue ? issueWebUrl(settings.baseUrl, issue) : null,
+        done: stepFinished(step) || subtreeFinished(step),
+      };
+    }),
   };
 }

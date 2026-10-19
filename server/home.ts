@@ -1,6 +1,6 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { errorMessage } from "../shared/errors";
-import { issueCard, type ProjectSummary, resourceWebUrl } from "../shared/lific";
+import { issueCard, type ProjectSummary } from "../shared/lific";
 import type { ConfiguredHome, Home } from "../shared/rpc";
 import type { Connections } from "./connection";
 import { readLinkedIssue, repositoryRoot } from "./git";
@@ -98,16 +98,16 @@ export async function loadHome(connections: Connections, paseo: PaseoApi): Promi
       .map((issue) => ({ ...issueCard(baseUrl, issue), projectName: project.name })),
   );
   const runPlans = new Set(runs.map((run) => run.plan));
-  const activePlans = projects.flatMap(({ project, plans }) =>
+  const activePlans = projects.flatMap(({ project, projectRoot, plans }) =>
     plans
       .filter((plan) => plan.status === "active" && !runPlans.has(plan.identifier))
       .map((plan) => ({
         identifier: plan.identifier,
+        projectRoot,
         title: plan.title,
         projectName: project.name,
         doneCount: plan.done_count,
         stepCount: plan.step_count,
-        url: resourceWebUrl(baseUrl, plan.identifier, "plans", plan.id),
       })),
   );
 
